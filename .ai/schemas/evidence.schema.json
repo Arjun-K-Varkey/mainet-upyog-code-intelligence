@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence",
+  "type": "object",
+  "required": [
+    "confidence"
+  ],
+  "properties": {
+    "repository": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "lineStart": {
+      "type": "integer"
+    },
+    "lineEnd": {
+      "type": "integer"
+    },
+    "method": {
+      "type": "string"
+    },
+    "confidence": {
+      "enum": [
+        "CONFIRMED",
+        "INFERRED",
+        "AMBIGUOUS",
+        "CONTRADICTED",
+        "UNKNOWN"
+      ]
+    },
+    "analysisStep": {
+      "type": "string"
+    }
+  }
+}

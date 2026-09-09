@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI Engineering Work Item",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "type",
+    "spec",
+    "acceptanceCriteria",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "product",
+        "requirement",
+        "spec",
+        "architecture",
+        "engineering",
+        "test",
+        "bug",
+        "research"
+      ]
+    },
+    "spec": {
+      "type": "string"
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "enum": [
+        "Backlog",
+        "Ready",
+        "In Progress",
+        "Review",
+        "Validation",
+        "Done",
+        "Blocked"
+      ]
+    }
+  }
+}
