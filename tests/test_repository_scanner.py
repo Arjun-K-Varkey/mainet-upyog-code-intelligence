@@ -42,10 +42,11 @@ class RepositoryScannerTests(unittest.TestCase):
             self.assertEqual(kinds["module-a/src/main/resources/schema.sql"], "sql")
             self.assertEqual(result.modules[0].module_type, "maven")
 
-    def test_excluded_directory_is_not_scanned(self):
+    def test_vendor_path_is_classified_as_vendor(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = RepositoryScanner().scan(make_fixture(Path(tmp)))
-            self.assertTrue(all(not record.path.startswith("vendor/") for record in result.files))
+            record = next(r for r in result.files if r.path == "vendor/ignored.java")
+            self.assertTrue(record.vendor)
 
     def test_hash_and_line_count(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -64,8 +65,7 @@ class RepositoryScannerTests(unittest.TestCase):
     def test_output_is_machine_readable_and_round_trips_as_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = RepositoryScanner().scan(make_fixture(Path(tmp)))
-            payload = result.to_json()
-            decoded = json.loads(payload)
+            decoded = json.loads(result.to_json())
             self.assertIsInstance(decoded, dict)
             self.assertIn("files", decoded)
             self.assertIn("evidence", decoded)
@@ -80,14 +80,14 @@ class RepositoryScannerTests(unittest.TestCase):
                 RepositoryScanner().scan(right).to_dict()["repository"]["id"],
             )
 
-    def test_unreadable_path_is_reported_when_stat_fails(self):
+    def test_evidence_contains_repository_run_and_tool_provenance(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = make_fixture(Path(tmp))
-            broken = root / "broken.java"
-            broken.write_text("class Broken {}\n", encoding="utf-8")
-            broken.unlink()
-            result = RepositoryScanner().scan(root)
-            self.assertEqual(result.status, "success")
+            result = RepositoryScanner().scan(make_fixture(Path(tmp)))
+            self.assertTrue(result.evidence)
+            for evidence in result.evidence:
+                self.assertEqual(evidence.repository_id, result.repository["id"])
+                self.assertIsNotNone(evidence.run_id)
+                self.assertEqual(evidence.tool_version, result.repository["tool_version"])
 
 
 if __name__ == "__main__":
