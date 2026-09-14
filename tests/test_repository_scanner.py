@@ -2,7 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from src.aca_ingestion.cli import main as cli_main
 from src.aca_ingestion.scanner import RepositoryScanner, ScanConfig
 
 
@@ -100,6 +102,14 @@ class RepositoryScannerTests(unittest.TestCase):
             after = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
             self.assertNotIn("SHOULD_NOT_EXIST", {p.name for p in root.iterdir()})
             self.assertEqual(before | {"execute.sh": b"touch SHOULD_NOT_EXIST\n"}, after)
+
+    def test_ac07_cli_rejects_output_inside_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_fixture(Path(tmp))
+            output = root / "inventory.json"
+            with patch("sys.argv", ["aca-ingestion", str(root), "--output", str(output)]):
+                self.assertEqual(cli_main(), 1)
+            self.assertFalse(output.exists())
 
     def test_ac08_json_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
