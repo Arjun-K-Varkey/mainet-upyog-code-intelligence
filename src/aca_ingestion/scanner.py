@@ -47,6 +47,10 @@ class EvidenceRecord:
     source_file: str
     value: dict
     status: str = "valid"
+    repository_id: str | None = None
+    revision: str | None = None
+    run_id: str | None = None
+    tool_version: str | None = None
 
 
 @dataclass
@@ -124,6 +128,15 @@ def _git_revision(root: Path) -> str | None:
     return None
 
 
+def _inventory_fingerprint(files: list[FileRecord]) -> str:
+    canonical = "\n".join(
+        f"{record.path}\0{record.kind}\0{record.size}\0{record.sha256}\0"
+        f"{record.line_count}\0{record.generated}\0{record.vendor}"
+        for record in sorted(files, key=lambda item: item.path)
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class RepositoryScanner:
     """Scan repository contents without executing repository code."""
 
@@ -144,20 +157,15 @@ class RepositoryScanner:
             "follow_symlinks": self.config.follow_symlinks,
         }, sort_keys=True)
         config_hash = hashlib.sha256(config_repr.encode()).hexdigest()
-        result = ScanResult(repository={
-            "id": _stable_id("REPO", str(root)),
-            "workspace": str(root),
-            "revision": revision,
-            "tool_version": self.TOOL_VERSION,
-            "configuration_fingerprint": config_hash,
-        })
 
+        files: list[FileRecord] = []
+        errors: list[dict] = []
         for path in _iter_files(root, self.config):
             rel = path.relative_to(root).as_posix()
             try:
                 size = path.stat().st_size
                 if size > self.config.max_file_size:
-                    result.errors.append({"path": rel, "code": "FILE_TOO_LARGE", "size": size})
+                    errors.append({"path": rel, "code": "FILE_TOO_LARGE", "size": size})
                     continue
                 data = path.read_bytes()
                 digest = hashlib.sha256(data).hexdigest()
@@ -167,26 +175,41 @@ class RepositoryScanner:
                 except UnicodeDecodeError:
                     lines = None
                 evidence_id = _stable_id("EVID", f"file:{rel}:{digest}")
-                record = FileRecord(rel, _classification(path), size, digest, lines,
-                                    _is_generated(rel), _is_vendor(rel), evidence_id)
-                result.files.append(record)
-                result.evidence.append(EvidenceRecord(
-                    evidence_id, "source", record.path,
-                    record.path,
-                    {"classification": record.kind, "size": size, "sha256": digest,
-                     "generated": record.generated, "vendor": record.vendor}
-                ))
+                files.append(FileRecord(rel, _classification(path), size, digest, lines,
+                                        _is_generated(rel), _is_vendor(rel), evidence_id))
             except (OSError, PermissionError) as exc:
-                result.errors.append({"path": rel, "code": "UNREADABLE", "message": str(exc)})
+                errors.append({"path": rel, "code": "UNREADABLE", "message": str(exc)})
 
-        result.files.sort(key=lambda r: r.path)
-        result.modules = self._detect_modules(root, result)
+        files.sort(key=lambda r: r.path)
+        inventory_fingerprint = _inventory_fingerprint(files)
+        repository_id = _stable_id("REPO", f"revision:{revision or 'content'}:{inventory_fingerprint}")
+        run_id = _stable_id("RUN", f"{repository_id}:{revision or inventory_fingerprint}:{config_hash}:{self.TOOL_VERSION}")
+        result = ScanResult(repository={
+            "id": repository_id,
+            "revision": revision,
+            "tool_version": self.TOOL_VERSION,
+            "configuration_fingerprint": config_hash,
+        }, files=files, errors=errors)
+
+        result.evidence.extend(
+            EvidenceRecord(
+                record.evidence_id, "source", record.path, record.path,
+                {"classification": record.kind, "size": record.size, "sha256": record.sha256,
+                 "generated": record.generated, "vendor": record.vendor},
+                repository_id=repository_id, revision=revision, run_id=run_id,
+                tool_version=self.TOOL_VERSION,
+            )
+            for record in result.files
+        )
+        result.modules = self._detect_modules(root, result, repository_id, revision, run_id)
         result.modules.sort(key=lambda r: r.root)
         if result.errors:
             result.status = "partial_success" if result.files else "failure"
         return result
 
-    def _detect_modules(self, root: Path, result: ScanResult) -> list[ModuleRecord]:
+    def _detect_modules(
+        self, root: Path, result: ScanResult, repository_id: str, revision: str | None, run_id: str
+    ) -> list[ModuleRecord]:
         descriptors: dict[str, list[str]] = {}
         for record in result.files:
             if record.kind in {"maven", "gradle"}:
@@ -201,6 +224,8 @@ class RepositoryScanner:
             modules.append(ModuleRecord(module_id, module_root or ".", module_type, tuple(sorted(files)), evidence_id))
             result.evidence.append(EvidenceRecord(
                 evidence_id, "config", module_id, module_root or ".",
-                {"module_type": module_type, "descriptors": sorted(files)}
+                {"module_type": module_type, "descriptors": sorted(files)},
+                repository_id=repository_id, revision=revision, run_id=run_id,
+                tool_version=self.TOOL_VERSION,
             ))
         return modules
