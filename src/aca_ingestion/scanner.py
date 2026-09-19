@@ -108,95 +108,104 @@ def _structural_roots(result):
     return roots
 
 def _java_package(data: bytes) -> str | None:
-    """Extract the first Java package declaration outside comments/literals."""
+    """Extract the first Java package declaration while ignoring comments/literals."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return None
 
+    # Blank comments and literals while preserving newlines so the declaration
+    # can still be matched without treating comment markers in literals as syntax.
+    chars = list(text)
     i = 0
-    n = len(text)
+    n = len(chars)
     state = "code"
     while i < n:
-        ch = text[i]
-        nxt = text[i + 1] if i + 1 < n else ""
-
+        ch = chars[i]
+        nxt = chars[i + 1] if i + 1 < n else ""
         if state == "code":
             if ch == "/" and nxt == "/":
-                state = "line_comment"
+                chars[i] = chars[i + 1] = " "
                 i += 2
+                state = "line_comment"
                 continue
             if ch == "/" and nxt == "*":
-                state = "block_comment"
+                chars[i] = chars[i + 1] = " "
                 i += 2
+                state = "block_comment"
                 continue
             if ch == '"':
-                state = "string"
+                chars[i] = " "
                 i += 1
+                state = "string"
                 continue
             if ch == "'":
-                state = "char"
+                chars[i] = " "
                 i += 1
+                state = "char"
                 continue
-            if ch == "p" and text.startswith("package", i):
-                before = text[i - 1] if i else ""
-                after = text[i + len("package")] if i + len("package") < n else ""
-                if (not (before.isalnum() or before in "_$")) and after.isspace():
-                    j = i + len("package")
-                    while j < n and text[j].isspace():
-                        j += 1
-                    start = j
-                    while j < n and text[j] not in ";\n\r":
-                        if text[j] == "/" and j + 1 < n and text[j + 1] in "/*":
-                            break
-                        j += 1
-                    candidate = text[start:j].strip()
-                    if candidate and j < n and text[j] == ";":
-                        parts = candidate.split(".")
-                        if all(
-                            part and (part[0].isalpha() or part[0] in "_$")
-                            and all(c.isalnum() or c in "_$" for c in part)
-                            for part in parts
-                        ):
-                            return candidate
             i += 1
             continue
-
         if state == "line_comment":
             if ch in "\n\r":
                 state = "code"
+            else:
+                chars[i] = " "
             i += 1
             continue
-
         if state == "block_comment":
             if ch == "*" and nxt == "/":
-                state = "code"
+                chars[i] = chars[i + 1] = " "
                 i += 2
+                state = "code"
             else:
+                if ch not in "\n\r":
+                    chars[i] = " "
                 i += 1
             continue
-
         if state == "string":
             if ch == "\\":
-                i += 2
+                chars[i] = " "
+                if i + 1 < n:
+                    if chars[i + 1] not in "\n\r":
+                        chars[i + 1] = " "
+                    i += 2
+                else:
+                    i += 1
             elif ch == '"':
-                state = "code"
+                chars[i] = " "
                 i += 1
+                state = "code"
             else:
+                if ch not in "\n\r":
+                    chars[i] = " "
                 i += 1
             continue
-
         if state == "char":
             if ch == "\\":
-                i += 2
+                chars[i] = " "
+                if i + 1 < n:
+                    if chars[i + 1] not in "\n\r":
+                        chars[i + 1] = " "
+                    i += 2
+                else:
+                    i += 1
             elif ch == "'":
+                chars[i] = " "
+                i += 1
                 state = "code"
-                i += 1
             else:
+                if ch not in "\n\r":
+                    chars[i] = " "
                 i += 1
-            continue
 
-    return None
+    sanitized = "".join(chars)
+    import re
+    match = re.search(
+        r"(?m)^\s*package\s+([A-Za-z_$][A-Za-z0-9_$]*(?:\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*;",
+        sanitized,
+    )
+    return re.sub(r"\s+", "", match.group(1)) if match else None
 
 class RepositoryScanner:
     TOOL_VERSION="aca-ingestion-0.4"
