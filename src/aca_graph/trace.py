@@ -167,6 +167,15 @@ class Trace:
                         add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
                     if step.target_node is not None and graph.find_node(step.target_node) is None:
                         add("MISSING_TARGET_NODE", f"{context} step {step.step_id} target node does not exist")
+                    if step.edge_id is not None:
+                        edge = graph.edges.get(step.edge_id)
+                        if edge is None:
+                            add("MISSING_EDGE", f"{context} step {step.step_id} edge does not exist")
+                        elif step.target_node is not None:
+                            direct = edge.source == step.source_node and edge.target == step.target_node and edge.relation == step.relation
+                            reversed_endpoints = edge.target == step.source_node and edge.source == step.target_node and edge.relation == step.relation
+                            if not (direct or reversed_endpoints):
+                                add("EDGE_ID_MISMATCH", f"{context} step {step.step_id} edge identity does not match endpoints/relation")
 
         if not self.repository_id:
             add("MISSING_REPOSITORY_ID", "repository_id is required")
@@ -299,7 +308,7 @@ class Trace:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Trace":
+    def from_dict(cls, raw: dict[str, Any], graph: Graph | None = None) -> "Trace":
         if raw.get("schema_version") != TRACE_SCHEMA_VERSION:
             raise TraceValidationError("UNSUPPORTED_TRACE_SCHEMA")
         def boundary(b: dict[str, Any]) -> TraceBoundary:
@@ -336,7 +345,7 @@ class Trace:
                 for b in raw.get("boundaries", [])),
             contradictions=tuple(raw.get("contradictions", [])),
         )
-        trace.require_valid()
+        trace.require_valid(graph)
         return trace
 
 
@@ -499,11 +508,12 @@ class TraceClassifier:
 class TraceEngine:
     """Deterministic candidate-path engine plus ACA-TRACE-001 semantic classification."""
 
-    def __init__(self, graph: Graph):
+    def __init__(self, graph: Graph, rule_registry: TraceRuleRegistry | None = None,
+                 classifier: TraceClassifier | None = None):
         graph.require_valid()
         self.graph = graph
-        self.rule_registry = TraceRuleRegistry()
-        self.classifier = TraceClassifier()
+        self.rule_registry = rule_registry or TraceRuleRegistry()
+        self.classifier = classifier or TraceClassifier()
         self.evidence_resolver = EvidenceResolver(graph)
         self.contradiction_detector = ContradictionDetector(graph)
         self.boundary_classifier = BoundaryClassifier()
@@ -513,6 +523,10 @@ class TraceEngine:
         raw_paths, truncated = self._enumerate_paths(request)
         candidates = tuple(self._candidate_path(nodes, edges) for nodes, edges in raw_paths)
         contradictions = self.contradiction_detector.detect(candidates)
+
+        classified_status, classified_steps, classified_alternatives, classified_confidence = (
+            self.classifier.classify(candidates, contradictions)
+        )
 
         if contradictions:
             status, steps, alternatives, confidence = "CONTRADICTED", (), candidates, None
@@ -526,6 +540,7 @@ class TraceEngine:
                     ref for contradiction in contradictions for ref in contradiction.get("evidence_refs", [])
                 })),
             ),)
+            boundaries = boundaries + self._aggregate_candidate_boundaries(candidates)
         elif not candidates:
             status, steps, alternatives, confidence = "UNKNOWN", (), (), None
             boundaries = (self.boundary_classifier.classify_no_path(request),)
@@ -538,6 +553,7 @@ class TraceEngine:
                     ref for candidate in candidates for step in candidate.steps for ref in step.evidence_refs
                 })),
             )]
+            boundary_list.extend(self._aggregate_candidate_boundaries(candidates))
             if truncated:
                 boundary_list.append(TraceBoundary(
                     boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
@@ -548,12 +564,17 @@ class TraceEngine:
             candidate = candidates[0]
             if truncated:
                 status, steps, alternatives, confidence = "AMBIGUOUS", (), candidates, None
-                boundaries = (TraceBoundary(
-                    boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
-                    reason="Candidate enumeration reached max_paths; additional candidate paths remain unresolved.",
-                ),)
+                boundaries = (
+                    TraceBoundary(
+                        boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
+                        reason="Candidate enumeration reached max_paths; additional candidate paths remain unresolved.",
+                    ),
+                    *self._aggregate_candidate_boundaries(candidates),
+                )
             else:
-                status, steps, alternatives, confidence = candidate.status, candidate.steps, (), candidate.confidence
+                status, steps, alternatives, confidence = (
+                    classified_status, classified_steps, classified_alternatives, classified_confidence
+                )
                 boundaries = ()
                 if status == "UNKNOWN":
                     boundaries = candidate.boundaries or (TraceBoundary(
@@ -573,7 +594,7 @@ class TraceEngine:
         trace_id = Trace.compute_id(
             repository_id=self.graph.repository["id"], revision=self.graph.revision,
             origin=request.source_id, target=request.target_id,
-            methodology_version=METHODOLOGY_VERSION, analyzer_version=ANALYZER_VERSION,
+            methodology_version=self.rule_registry.version, analyzer_version=ANALYZER_VERSION,
         )
         result = Trace(
             trace_id=trace_id, repository_id=self.graph.repository["id"],
