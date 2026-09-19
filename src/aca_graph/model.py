@@ -134,6 +134,7 @@ class Graph:
             if not edge.id or not edge.repository_id or not edge.analysis_run_id: errors.append({"code":"MISSING_EDGE_IDENTITY","id":edge.id})
             if edge.provenance=="deterministic" and edge.confidence is not None: errors.append({"code":"DETERMINISTIC_CONFIDENCE","id":edge.id})
             if edge.provenance=="inferred" and edge.confidence is None: errors.append({"code":"INFERRED_MISSING_CONFIDENCE","id":edge.id})
+            if edge.provenance=="inferred" and not edge.evidence_refs: errors.append({"code":"INFERRED_MISSING_EVIDENCE","id":edge.id})
             if edge.confidence is not None and not 0.0 <= edge.confidence <= 1.0: errors.append({"code":"INVALID_CONFIDENCE","id":edge.id})
             if edge.source in self.nodes and edge.target in self.nodes:
                 src,tgt=self.nodes[edge.source],self.nodes[edge.target]
