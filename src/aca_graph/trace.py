@@ -122,6 +122,38 @@ class Trace:
         def add(code: str, message: str) -> None:
             errors.append({"code": code, "message": message})
 
+        evidence_set = set(self.evidence)
+
+        def validate_steps(steps: tuple[TraceStep, ...], context: str) -> None:
+            ids = [s.step_id for s in steps]
+            if len(ids) != len(set(ids)):
+                add("DUPLICATE_STEP_ID", f"{context} step IDs must be unique")
+            sequences = [s.sequence for s in steps]
+            if sequences != list(range(1, len(sequences) + 1)):
+                add("NON_CONTIGUOUS_SEQUENCE", f"{context} step sequence must start at 1 and be contiguous")
+            for step in steps:
+                if step.status not in TRACE_STATES:
+                    add("INVALID_STEP_STATUS", f"invalid {context} step status: {step.status}")
+                if step.provenance not in PROVENANCE:
+                    add("INVALID_PROVENANCE", f"invalid {context} provenance: {step.provenance}")
+                if step.confidence is not None and not 0 <= step.confidence <= 1:
+                    add("STEP_CONFIDENCE_OUT_OF_RANGE", f"{context} step {step.step_id} confidence out of range")
+                if step.provenance == "inferred" and step.confidence is None:
+                    add("INFERRED_MISSING_CONFIDENCE", f"{context} step {step.step_id} requires confidence")
+                if step.provenance == "deterministic" and step.confidence is not None:
+                    add("DETERMINISTIC_UNSUPPORTED_CONFIDENCE", f"{context} step {step.step_id} must not carry confidence")
+                if step.status in {"INFERRED", "AMBIGUOUS", "CONTRADICTED"} and not step.rationale:
+                    add("MISSING_STEP_RATIONALE", f"{context} step {step.step_id} requires rationale")
+                if step.status in {"CONFIRMED", "INFERRED", "AMBIGUOUS", "CONTRADICTED"} and not step.evidence_refs:
+                    add("MISSING_STEP_EVIDENCE", f"{context} material step {step.step_id} requires evidence")
+                if not set(step.evidence_refs).issubset(evidence_set):
+                    add("UNRESOLVED_STEP_EVIDENCE", f"{context} step {step.step_id} references evidence not in trace evidence")
+                if graph is not None:
+                    if graph.find_node(step.source_node) is None:
+                        add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
+                    if step.target_node is not None and graph.find_node(step.target_node) is None:
+                        add("MISSING_TARGET_NODE", f"{context} step {step.step_id} target node does not exist")
+
         if self.status not in TRACE_STATES:
             add("INVALID_STATUS", f"unsupported trace status: {self.status}")
         if self.confidence is not None and not 0 <= self.confidence <= 1:
@@ -508,7 +540,7 @@ class TraceEngine:
             return False
         return True
 
-    def _enumerate_paths(self, request: TraceRequest) -> list[tuple[tuple[str, ...], tuple[Edge, ...]]]:
+    def _enumerate_paths(self, request: TraceRequest) -> tuple[list[tuple[tuple[str, ...], tuple[Edge, ...]]], bool]:
         queue = [((request.source_id,), ())]
         results = []
         while queue and len(results) < request.max_paths:
@@ -525,31 +557,39 @@ class TraceEngine:
                 if not self._edge_allowed(edge, request) or next_node in node_ids:
                     continue
                 queue.append((node_ids + (next_node,), edges + (edge,)))
-        return results
+        return results, bool(queue)
 
     def _candidate_path(self, node_ids: tuple[str, ...], edges: tuple[Edge, ...]) -> CandidatePath:
         steps = []
         confidences = []
+        missing_evidence = False
         for sequence, edge in enumerate(edges, 1):
             status, provenance, confidence = self.rule.classify(edge)
-            if confidence is not None:
-                confidences.append(confidence)
             evidence = self.evidence_resolver.resolve(tuple(sorted(edge.evidence_refs)))
+            if not evidence:
+                missing_evidence = True
+                status, provenance, confidence = "UNKNOWN", "deterministic", None
+            elif confidence is not None:
+                confidences.append(confidence)
             steps.append(TraceStep(
                 step_id=self._step_id(sequence, node_ids[sequence - 1], edge),
                 sequence=sequence, source_node=node_ids[sequence - 1],
                 relation=edge.relation, target_node=node_ids[sequence],
                 status=status, provenance=provenance, confidence=confidence,
                 evidence_refs=evidence,
-                rationale="Canonical CodeGraph relationship established deterministically."
-                if status == "CONFIRMED" else "Canonical CodeGraph relationship is inferred.",
+                rationale=("Material hop lacks resolvable supporting evidence."
+                           if not evidence else
+                           "Canonical CodeGraph relationship established deterministically."
+                           if status == "CONFIRMED" else
+                           "Canonical CodeGraph relationship is inferred."),
             ))
+        if missing_evidence:
+            return CandidatePath(steps=tuple(steps), status="UNKNOWN", confidence=None,
+                                 rationale="At least one material hop lacks resolvable evidence.")
         status = "INFERRED" if confidences else "CONFIRMED"
         confidence = min(confidences) if confidences else None
-        return CandidatePath(
-            steps=tuple(steps), status=status, confidence=confidence,
-            rationale=None if status == "CONFIRMED" else "At least one hop is inferred.",
-        )
+        return CandidatePath(steps=tuple(steps), status=status, confidence=confidence,
+                             rationale=None if status == "CONFIRMED" else "At least one hop is inferred.")
 
     @staticmethod
     def _step_id(sequence: int, source_node: str, edge: Edge) -> str:
