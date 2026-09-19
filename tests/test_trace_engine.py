@@ -76,7 +76,10 @@ class TraceEngineTests(unittest.TestCase):
             "boundary_type": "reflection",
             "reason": "Target is reached through reflection.",
         }
-        edge.evidence_refs = ("E_BOUNDARY",)
+        from dataclasses import replace
+        replacement = replace(edge, evidence_refs=("E_BOUNDARY",))
+        graph.edges[replacement.id] = replacement
+        del graph.edges[edge.id]
         result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
         self.assertEqual(result.status, "UNKNOWN")
         self.assertEqual(result.steps[0].status, "UNKNOWN")
