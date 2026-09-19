@@ -202,6 +202,8 @@ class CodeGraphTests(unittest.TestCase):
             self.assertEqual(len(packages), 1)
             package_id = packages[0].id
             self.assertEqual(len(graph.outgoing(package_id, "CONTAINS")), 2)
+            self.assertTrue(packages[0].evidence_refs)
+            self.assertTrue(all(ref in graph.evidence for ref in packages[0].evidence_refs))
             self.assertEqual(graph.validate(), [])
 
     def test_serialization_ignores_workspace_path_and_scan_time(self):
