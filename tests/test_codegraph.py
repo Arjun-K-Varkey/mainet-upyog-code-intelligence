@@ -122,6 +122,43 @@ class CodeGraphTests(unittest.TestCase):
                      for p in root.rglob("*") if p.is_file()}
             self.assertEqual(before, after)
 
+    def test_node_identity_is_revision_scoped(self):
+        v1 = Node.create("File", "REPO", "file:App.java", analysis_run_id="RUN1", revision="REV1")
+        v2 = Node.create("File", "REPO", "file:App.java", analysis_run_id="RUN2", revision="REV2")
+        self.assertNotEqual(v1.id, v2.id)
+
+    def test_multiple_java_files_share_package_without_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src/A.java").write_text("package com.example;\nclass A {}\n", encoding="utf-8")
+            (root / "src/B.java").write_text("package com.example;\nclass B {}\n", encoding="utf-8")
+            result = RepositoryScanner().scan(root)
+            graph = build_from_ingestion(result)
+            packages = [n for n in graph.nodes.values() if n.type == "Package"]
+            self.assertEqual(len(packages), 1)
+            package_id = packages[0].id
+            self.assertEqual(len(graph.outgoing(package_id, "CONTAINS")), 2)
+            self.assertEqual(graph.validate(), [])
+
+    def test_serialization_ignores_workspace_path_and_scan_time(self):
+        with tempfile.TemporaryDirectory() as left, tempfile.TemporaryDirectory() as right:
+            left_root, right_root = Path(left) / "repo", Path(right) / "repo"
+            for root in (left_root, right_root):
+                (root / "src").mkdir(parents=True)
+                (root / "src/App.java").write_text("package com.example;\nclass App {}\n", encoding="utf-8")
+            from src.aca_ingestion.scanner import ScanConfig
+            config = ScanConfig(repository_id="FIXED-REPO")
+            first = build_from_ingestion(RepositoryScanner(config).scan(left_root))
+            second = build_from_ingestion(RepositoryScanner(config).scan(right_root))
+            self.assertEqual(first.to_json(), second.to_json())
+
+    def test_serialization_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            graph = build_from_ingestion(RepositoryScanner().scan(Path(tmp)))
+            restored = Graph.from_dict(json.loads(graph.to_json()))
+            self.assertEqual(restored.to_json(), graph.to_json())
+
 
 if __name__ == "__main__":
     unittest.main()
