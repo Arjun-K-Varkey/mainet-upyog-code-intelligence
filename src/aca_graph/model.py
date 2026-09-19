@@ -37,42 +37,22 @@ class Node:
     revision: str | None = None
 
     @classmethod
-    def create(
-        cls,
-        node_type: str,
-        repository_id: str,
-        canonical_key: str,
-        *,
-        properties: dict[str, Any] | None = None,
-        evidence_refs: Iterable[str] = (),
-        provenance: str = "deterministic",
-        analysis_run_id: str | None = None,
-        revision: str | None = None,
-    ) -> "Node":
+    def create(cls, node_type: str, repository_id: str, canonical_key: str, *,
+               properties: dict[str, Any] | None = None,
+               evidence_refs: Iterable[str] = (), provenance: str = "deterministic",
+               analysis_run_id: str | None = None, revision: str | None = None) -> "Node":
         return cls(
-            id=stable_id("NODE", f"{node_type}:{canonical_key}"),
-            type=node_type,
-            repository_id=repository_id,
-            canonical_key=canonical_key,
-            properties=properties or {},
-            evidence_refs=tuple(sorted(set(evidence_refs))),
-            provenance=provenance,
-            analysis_run_id=analysis_run_id,
-            revision=revision,
+            id=stable_id("NODE", f"{repository_id}:{node_type}:{canonical_key}"),
+            type=node_type, repository_id=repository_id, canonical_key=canonical_key,
+            properties=properties or {}, evidence_refs=tuple(sorted(set(evidence_refs))),
+            provenance=provenance, analysis_run_id=analysis_run_id, revision=revision,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "type": self.type,
-            "repository_id": self.repository_id,
-            "revision": self.revision,
-            "canonical_key": self.canonical_key,
-            "properties": self.properties,
-            "evidence_refs": list(self.evidence_refs),
-            "provenance": self.provenance,
-            "analysis_run_id": self.analysis_run_id,
-        }
+        return {"id": self.id, "type": self.type, "repository_id": self.repository_id,
+                "revision": self.revision, "canonical_key": self.canonical_key,
+                "properties": self.properties, "evidence_refs": list(self.evidence_refs),
+                "provenance": self.provenance, "analysis_run_id": self.analysis_run_id}
 
 
 @dataclass(frozen=True)
@@ -89,45 +69,22 @@ class Edge:
     revision: str | None = None
 
     @classmethod
-    def create(
-        cls,
-        source: Node,
-        relation: str,
-        target: Node,
-        *,
-        evidence_refs: Iterable[str] = (),
-        provenance: str = "deterministic",
-        confidence: float | None = None,
-        analysis_run_id: str | None = None,
-        revision: str | None = None,
-    ) -> "Edge":
-        canonical = f"{source.canonical_key}|{relation}|{target.canonical_key}|{revision or ''}"
-        return cls(
-            id=stable_id("EDGE", canonical),
-            source=source.id,
-            relation=relation,
-            target=target.id,
-            repository_id=source.repository_id,
-            evidence_refs=tuple(sorted(set(evidence_refs))),
-            provenance=provenance,
-            confidence=confidence,
-            analysis_run_id=analysis_run_id,
-            revision=revision,
-        )
+    def create(cls, source: Node, relation: str, target: Node, *,
+               evidence_refs: Iterable[str] = (), provenance: str = "deterministic",
+               confidence: float | None = None, analysis_run_id: str | None = None,
+               revision: str | None = None) -> "Edge":
+        canonical = f"{source.repository_id}|{source.canonical_key}|{relation}|{target.canonical_key}|{revision or ''}"
+        return cls(id=stable_id("EDGE", canonical), source=source.id, relation=relation,
+                   target=target.id, repository_id=source.repository_id,
+                   evidence_refs=tuple(sorted(set(evidence_refs))), provenance=provenance,
+                   confidence=confidence, analysis_run_id=analysis_run_id, revision=revision)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "source": self.source,
-            "relation": self.relation,
-            "target": self.target,
-            "repository_id": self.repository_id,
-            "revision": self.revision,
-            "provenance": self.provenance,
-            "confidence": self.confidence,
-            "evidence_refs": list(self.evidence_refs),
-            "analysis_run_id": self.analysis_run_id,
-        }
+        return {"id": self.id, "source": self.source, "relation": self.relation,
+                "target": self.target, "repository_id": self.repository_id,
+                "revision": self.revision, "provenance": self.provenance,
+                "confidence": self.confidence, "evidence_refs": list(self.evidence_refs),
+                "analysis_run_id": self.analysis_run_id}
 
 
 class GraphValidationError(ValueError):
@@ -162,7 +119,6 @@ class Graph:
     def validate(self) -> list[dict[str, str]]:
         errors: list[dict[str, str]] = []
         seen_canonical: set[tuple[str, str, str]] = set()
-
         for node in self.nodes.values():
             if node.type not in NODE_TYPES:
                 errors.append({"code": "INVALID_NODE_TYPE", "id": node.id})
@@ -173,7 +129,6 @@ class Graph:
             for ref in node.evidence_refs:
                 if ref not in self.evidence:
                     errors.append({"code": "UNRESOLVED_EVIDENCE", "id": node.id, "evidence": ref})
-
         for edge in self.edges.values():
             if edge.source not in self.nodes:
                 errors.append({"code": "ORPHAN_EDGE_SOURCE", "id": edge.id})
@@ -198,7 +153,6 @@ class Graph:
             for ref in edge.evidence_refs:
                 if ref not in self.evidence:
                     errors.append({"code": "UNRESOLVED_EVIDENCE", "id": edge.id, "evidence": ref})
-
         return errors
 
     def require_valid(self) -> None:
@@ -210,16 +164,12 @@ class Graph:
         return self.nodes.get(node_id)
 
     def outgoing(self, node_id: str, relation: str | None = None) -> list[Edge]:
-        return sorted(
-            [e for e in self.edges.values() if e.source == node_id and (relation is None or e.relation == relation)],
-            key=lambda e: e.id,
-        )
+        return sorted([e for e in self.edges.values()
+                       if e.source == node_id and (relation is None or e.relation == relation)], key=lambda e: e.id)
 
     def incoming(self, node_id: str, relation: str | None = None) -> list[Edge]:
-        return sorted(
-            [e for e in self.edges.values() if e.target == node_id and (relation is None or e.relation == relation)],
-            key=lambda e: e.id,
-        )
+        return sorted([e for e in self.edges.values()
+                       if e.target == node_id and (relation is None or e.relation == relation)], key=lambda e: e.id)
 
     def neighbors(self, node_id: str) -> list[Node]:
         ids = {e.target for e in self.outgoing(node_id)} | {e.source for e in self.incoming(node_id)}
@@ -245,15 +195,11 @@ class Graph:
 
     def to_dict(self) -> dict[str, Any]:
         self.require_valid()
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "repository": self.repository,
-            "revision": self.revision,
-            "analysis_run_id": self.analysis_run_id,
-            "nodes": [n.to_dict() for n in sorted(self.nodes.values(), key=lambda x: x.id)],
-            "edges": [e.to_dict() for e in sorted(self.edges.values(), key=lambda x: x.id)],
-            "evidence": [{"id": k, **self.evidence[k]} for k in sorted(self.evidence)],
-        }
+        return {"schema_version": SCHEMA_VERSION, "repository": self.repository,
+                "revision": self.revision, "analysis_run_id": self.analysis_run_id,
+                "nodes": [n.to_dict() for n in sorted(self.nodes.values(), key=lambda x: x.id)],
+                "edges": [e.to_dict() for e in sorted(self.edges.values(), key=lambda x: x.id)],
+                "evidence": [{"id": k, **self.evidence[k]} for k in sorted(self.evidence)]}
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
