@@ -490,6 +490,8 @@ class TraceRuleRegistry:
 
     @property
     def version(self) -> str:
+        if len(self.rules) == 1 and self.rules[0].name == TraceRule.name and self.rules[0].version == TraceRule.version:
+            return METHODOLOGY_VERSION
         return "+".join(f"{rule.name}:{rule.version}" for rule in self.rules)
 
 
@@ -612,6 +614,23 @@ class TraceEngine:
         )
         result.require_valid(self.graph)
         return result
+
+    @staticmethod
+    def _aggregate_candidate_boundaries(
+        candidates: tuple[CandidatePath, ...],
+    ) -> tuple[TraceBoundary, ...]:
+        unique: dict[tuple[Any, ...], TraceBoundary] = {}
+        for candidate in candidates:
+            for boundary in candidate.boundaries:
+                key = (
+                    boundary.boundary_type,
+                    boundary.at_step,
+                    boundary.status,
+                    boundary.reason,
+                    tuple(sorted(boundary.evidence_refs)),
+                )
+                unique[key] = boundary
+        return tuple(unique[key] for key in sorted(unique))
 
     def _validate_request(self, request: TraceRequest) -> None:
         source = self.graph.find_node(request.source_id)
