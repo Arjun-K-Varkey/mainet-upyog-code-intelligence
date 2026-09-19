@@ -38,7 +38,16 @@ def build_from_ingestion(result: Any) -> Graph:
             properties={"revision": revision}, analysis_run_id=run_id, revision=revision,
         )
         graph.add_node(revision_node)
+        revision_evidence = next(
+            (e.id for e in result.evidence
+             if getattr(e, "type", None) == "revision"
+             and getattr(e, "value", {}).get("revision") == revision),
+            None,
+        )
+        if revision_evidence is None:
+            raise ValueError("SPEC-001 result is missing revision evidence")
         graph.add_edge(Edge.create(repo_node, "CONTAINS", revision_node,
+                                   evidence_refs=(revision_evidence,),
                                    analysis_run_id=run_id, revision=revision))
 
     module_nodes: dict[str, Node] = {}
