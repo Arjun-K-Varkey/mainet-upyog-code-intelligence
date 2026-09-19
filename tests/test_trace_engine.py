@@ -172,6 +172,16 @@ class TraceEngineTests(unittest.TestCase):
         with self.assertRaises(TraceValidationError):
             Trace.from_dict(data, graph=graph)
 
+    def test_incoming_edge_identity_rejects_wrong_orientation(self):
+        graph, a, b, _ = self.graph()
+        result = TraceEngine(graph).trace(
+            TraceRequest(b.id, target_id=a.id, direction="INCOMING", max_depth=1)
+        )
+        data = result.to_dict()
+        data["steps"][0]["traversal_direction"] = "OUTGOING"
+        with self.assertRaises(TraceValidationError):
+            Trace.from_dict(data, graph=graph)
+
     def test_injected_rule_registry_is_used(self):
         graph, a, b, _ = self.graph()
 
