@@ -486,16 +486,23 @@ class TraceEngine:
             boundaries = tuple(boundary_list)
         else:
             candidate = candidates[0]
-            status, steps, alternatives, confidence = candidate.status, candidate.steps, (), candidate.confidence
-            boundaries = ()
-            if status == "UNKNOWN":
+            if truncated:
+                status, steps, alternatives, confidence = "AMBIGUOUS", (), candidates, None
                 boundaries = (TraceBoundary(
-                    boundary_type="MISSING_EVIDENCE", at_step=next(
-                        (step.sequence for step in candidate.steps if not step.evidence_refs), None
-                    ),
-                    status="UNKNOWN",
-                    reason="Material hop lacks resolvable supporting evidence and cannot be confirmed.",
+                    boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
+                    reason="Candidate enumeration reached max_paths; additional candidate paths remain unresolved.",
                 ),)
+            else:
+                status, steps, alternatives, confidence = candidate.status, candidate.steps, (), candidate.confidence
+                boundaries = ()
+                if status == "UNKNOWN":
+                    boundaries = (TraceBoundary(
+                        boundary_type="MISSING_EVIDENCE", at_step=next(
+                            (step.sequence for step in candidate.steps if not step.evidence_refs), None
+                        ),
+                        status="UNKNOWN",
+                        reason="Material hop lacks resolvable supporting evidence and cannot be confirmed.",
+                    ),)
 
         evidence = self.evidence_resolver.resolve(tuple(sorted({
             ref for candidate in candidates for step in candidate.steps for ref in step.evidence_refs
