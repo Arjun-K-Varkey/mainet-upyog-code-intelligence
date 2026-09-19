@@ -118,7 +118,7 @@ class TraceEngineTests(unittest.TestCase):
             methodology_version=METHODOLOGY_VERSION, analyzer_version=ANALYZER_VERSION,
             contradictions=({"claims": ["N1->N2", "N1->N3"], "evidence_refs": ["E1", "E2"]},),
             evidence=("E1", "E2"),
-            boundaries=(TraceBoundary("CONTRADICTION", 1, "CONTRADICTED",
+            boundaries=(TraceBoundary("UNRESOLVED_PATH", 1, "CONTRADICTED",
                                       "Conflicting claims remain.", ("E1", "E2")),),
         )
         self.assertEqual(base.validate(), [])
