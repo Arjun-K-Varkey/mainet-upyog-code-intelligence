@@ -143,7 +143,7 @@ class RepositoryScanner:
         files.sort(key=lambda r:r.path); inventory=_fingerprint(files)
         repo_id=self.config.repository_id or _stable_id("REPO",f"revision:{revision or 'content'}:{inventory}")
         workspace_id=_stable_id("WS",f"{repo_id}:{root.name}"); run_id=_stable_id("RUN",f"{repo_id}:{revision or inventory}:{config_hash}:{self.TOOL_VERSION}")
-        result=ScanResult({"id":repo_id,"workspace_id":workspace_id,"source_path":root.as_posix(),"vcs":vcs,"revision":revision,"scan_timestamp":timestamp,"tool_version":self.TOOL_VERSION,"configuration_fingerprint":config_hash,"version_metadata":self.config.version_metadata},files=files,errors=errors)
+        result=ScanResult({"id":repo_id,"workspace_id":workspace_id,"source_path":root.as_posix(),"vcs":vcs,"revision":revision,"scan_timestamp":timestamp,"tool_version":self.TOOL_VERSION,"configuration_fingerprint":config_hash,"version_metadata":self.config.version_metadata,"analysis_run_id":run_id},files=files,errors=errors)
         for r in result.files:
             result.evidence.append(EvidenceRecord(r.evidence_id,"source",r.path,r.path,{"classification":r.kind,"size":r.size,"sha256":r.sha256,"generated":r.generated,"vendor":r.vendor,"package_name":r.package_name},repository_id=repo_id,revision=revision,run_id=run_id,tool_version=self.TOOL_VERSION))
         for e in result.errors:
