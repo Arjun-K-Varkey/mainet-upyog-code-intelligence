@@ -450,7 +450,7 @@ class TraceEngine:
 
     def trace(self, request: TraceRequest) -> Trace:
         self._validate_request(request)
-        raw_paths = self._enumerate_paths(request)
+        raw_paths, truncated = self._enumerate_paths(request)
         candidates = tuple(self._candidate_path(nodes, edges) for nodes, edges in raw_paths)
         contradictions = self.contradiction_detector.detect(candidates)
 
@@ -471,17 +471,31 @@ class TraceEngine:
             boundaries = (self.boundary_classifier.classify_no_path(request),)
         elif len(candidates) > 1:
             status, steps, alternatives, confidence = "AMBIGUOUS", (), candidates, None
-            boundaries = (TraceBoundary(
+            boundary_list = [TraceBoundary(
                 boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
                 reason="Multiple materially distinct candidate paths remain unresolved.",
                 evidence_refs=tuple(sorted({
                     ref for candidate in candidates for step in candidate.steps for ref in step.evidence_refs
                 })),
-            ),)
+            )]
+            if truncated:
+                boundary_list.append(TraceBoundary(
+                    boundary_type="UNRESOLVED_PATH", at_step=None, status="AMBIGUOUS",
+                    reason="Candidate enumeration reached max_paths; additional candidate paths remain unresolved.",
+                ))
+            boundaries = tuple(boundary_list)
         else:
             candidate = candidates[0]
             status, steps, alternatives, confidence = candidate.status, candidate.steps, (), candidate.confidence
             boundaries = ()
+            if status == "UNKNOWN":
+                boundaries = (TraceBoundary(
+                    boundary_type="MISSING_EVIDENCE", at_step=next(
+                        (step.sequence for step in candidate.steps if not step.evidence_refs), None
+                    ),
+                    status="UNKNOWN",
+                    reason="Material hop lacks resolvable supporting evidence and cannot be confirmed.",
+                ),)
 
         evidence = self.evidence_resolver.resolve(tuple(sorted({
             ref for candidate in candidates for step in candidate.steps for ref in step.evidence_refs
