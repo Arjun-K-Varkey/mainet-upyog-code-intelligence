@@ -59,7 +59,7 @@ class TraceEngineTests(unittest.TestCase):
         self.assertEqual(result.status, "UNKNOWN")
 
     def test_incoming_trace(self):
-        graph, a, _, c = self.graph()
+        graph, a, b, c = self.graph()
         result = TraceEngine(graph).trace(
             TraceRequest(c.id, target_id=a.id, direction="INCOMING", max_depth=2)
         )
