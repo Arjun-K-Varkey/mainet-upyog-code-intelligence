@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Any
 
-from .model import Edge, Graph
+from .model import Edge, Graph, NODE_TYPES, RELATIONS
 
 TRACE_SCHEMA_VERSION = "aca-trace-0.1"
 METHODOLOGY_VERSION = "aca-trace-method-0.2"
@@ -163,56 +163,19 @@ class Trace:
         if not self.methodology_version or not self.analyzer_version:
             add("MISSING_VERSION", "methodology_version and analyzer_version are required")
 
-        step_ids = [s.step_id for s in self.steps]
-        if len(step_ids) != len(set(step_ids)):
-            add("DUPLICATE_STEP_ID", "step IDs must be unique")
-        sequences = [s.sequence for s in self.steps]
-        if sequences != list(range(1, len(sequences) + 1)):
-            add("NON_CONTIGUOUS_SEQUENCE", "step sequence must start at 1 and be contiguous")
-
-        evidence_set = set(self.evidence)
-        for step in self.steps:
-            if step.status not in TRACE_STATES:
-                add("INVALID_STEP_STATUS", f"invalid step status: {step.status}")
-            if step.provenance not in PROVENANCE:
-                add("INVALID_PROVENANCE", f"invalid provenance: {step.provenance}")
-            if step.confidence is not None and not 0 <= step.confidence <= 1:
-                add("STEP_CONFIDENCE_OUT_OF_RANGE", f"step {step.step_id} confidence out of range")
-            if step.provenance == "inferred" and step.confidence is None:
-                add("INFERRED_MISSING_CONFIDENCE", f"step {step.step_id} requires confidence")
-            if step.provenance == "deterministic" and step.confidence is not None:
-                add("DETERMINISTIC_UNSUPPORTED_CONFIDENCE", f"step {step.step_id} must not carry confidence")
-            if step.status in {"INFERRED", "AMBIGUOUS", "CONTRADICTED"} and not step.rationale:
-                add("MISSING_STEP_RATIONALE", f"step {step.step_id} requires rationale")
-            if not set(step.evidence_refs).issubset(evidence_set):
-                add("UNRESOLVED_STEP_EVIDENCE", f"step {step.step_id} references evidence not in trace evidence")
-            if graph is not None:
-                if graph.find_node(step.source_node) is None:
-                    add("MISSING_SOURCE_NODE", f"step {step.step_id} source node does not exist")
-                if step.target_node is not None and graph.find_node(step.target_node) is None:
-                    add("MISSING_TARGET_NODE", f"step {step.step_id} target node does not exist")
-
-        for index, contradiction in enumerate(self.contradictions, 1):
-            if not isinstance(contradiction, dict):
-                add("INVALID_CONTRADICTION", f"contradiction {index} must be an object")
-                continue
-            claims = contradiction.get("claims")
-            refs = contradiction.get("evidence_refs")
-            if not isinstance(claims, list) or len(claims) < 2:
-                add("CONTRADICTION_MISSING_CLAIMS", f"contradiction {index} requires at least two conflicting claims")
-            else:
-                for claim_index, claim in enumerate(claims, 1):
-                    if not isinstance(claim, dict) or not all(claim.get(k) for k in ("source_node", "relation", "target_node")):
-                        add("INVALID_CONTRADICTION_CLAIM", f"contradiction {index} claim {claim_index} is incomplete")
-                    claim_refs = claim.get("evidence_refs", []) if isinstance(claim, dict) else []
-                    if not claim_refs or not set(claim_refs).issubset(evidence_set):
-                        add("UNRESOLVED_CONTRADICTION_EVIDENCE", f"contradiction {index} claim {claim_index} evidence does not resolve")
-            if not contradiction.get("affected_step"):
-                add("CONTRADICTION_MISSING_AFFECTED_STEP", f"contradiction {index} requires affected_step")
-            if not isinstance(refs, list) or not refs or not set(refs).issubset(evidence_set):
-                add("UNRESOLVED_CONTRADICTION_EVIDENCE", f"contradiction {index} evidence does not resolve")
-            if not contradiction.get("resolution_state"):
-                add("CONTRADICTION_MISSING_RESOLUTION", f"contradiction {index} requires resolution_state")
+        validate_steps(self.steps, "primary")
+        for index, alternative in enumerate(self.alternatives, 1):
+            if alternative.status not in TRACE_STATES:
+                add("INVALID_ALTERNATIVE_STATUS", f"invalid alternative {index} status: {alternative.status}")
+            if alternative.confidence is not None and not 0 <= alternative.confidence <= 1:
+                add("ALTERNATIVE_CONFIDENCE_OUT_OF_RANGE", f"alternative {index} confidence out of range")
+            if alternative.status == "INFERRED" and alternative.confidence is None:
+                add("INFERRED_MISSING_CONFIDENCE", f"alternative {index} requires confidence")
+            if alternative.status in {"INFERRED", "AMBIGUOUS", "CONTRADICTED"} and not alternative.rationale:
+                add("MISSING_ALTERNATIVE_RATIONALE", f"alternative {index} requires rationale")
+            if not alternative.steps:
+                add("EMPTY_ALTERNATIVE", f"alternative {index} must contain steps")
+            validate_steps(alternative.steps, f"alternative {index}")
 
         for boundary in self.boundaries:
             if boundary.boundary_type not in BOUNDARY_TYPES:
