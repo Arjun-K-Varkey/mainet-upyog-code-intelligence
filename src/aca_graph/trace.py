@@ -369,16 +369,10 @@ class ContradictionDetector:
         self.graph = graph
 
     def detect(self, candidates: tuple[CandidatePath, ...]) -> tuple[dict[str, Any], ...]:
-        candidate_edges = {
-            (step.source_node, step.relation, step.target_node)
-            for candidate in candidates
-            for step in candidate.steps
+        candidate_edge_ids = {
+            step.edge_id for candidate in candidates for step in candidate.steps
+            if step.edge_id is not None
         }
-        # Candidate steps may be oriented opposite to canonical CodeGraph edges
-        # during INCOMING traversal; contradiction claims remain canonical.
-        candidate_canonical_edges = set(candidate_edges)
-        for source, relation, target in candidate_edges:
-            candidate_canonical_edges.add((target, relation, source))
         results: list[dict[str, Any]] = []
         for evidence_id, record in sorted(self.graph.evidence.items()):
             if not isinstance(record, dict) or record.get("type") != "contradiction":
@@ -391,7 +385,7 @@ class ContradictionDetector:
                 (edge.source, edge.relation, edge.target)
                 for edge in edges
             ]
-            if not all(claim in candidate_canonical_edges for claim in claims):
+            if not all(edge.id in candidate_edge_ids for edge in edges):
                 continue
             results.append({
                 "affected_step": record.get("affected_step") or self._derive_affected_step(edges),
@@ -668,6 +662,12 @@ class TraceEngine:
                 status, provenance, confidence = "UNKNOWN", "deterministic", None
             if not evidence:
                 missing_evidence = True
+                missing_boundary = TraceBoundary(
+                    boundary_type="MISSING_EVIDENCE", at_step=sequence,
+                    status="UNKNOWN",
+                    reason="Material hop lacks resolvable supporting evidence.",
+                )
+                boundaries.append(missing_boundary)
                 status, provenance, confidence = "UNKNOWN", "deterministic", None
             elif confidence is not None and status != "UNKNOWN":
                 confidences.append(confidence)
