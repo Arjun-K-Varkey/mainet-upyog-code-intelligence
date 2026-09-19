@@ -155,7 +155,7 @@ class RepositoryScanner:
     def _detect_modules(self,result,repo_id,revision,run_id):
         descriptors={}
         for r in result.files:
-            if r.kind in {"maven","gradle"}: descriptors.setdefault(str(Path(r.path).parent).replace("\","/"),[]).append(r.path)
+            if r.kind in {"maven", "gradle"}: descriptors.setdefault(str(Path(r.path).parent).replace("\\", "/"), []).append(r.path)
         roots=set(descriptors)|_structural_roots(result); modules=[]
         for root in sorted(roots):
             ds=sorted(descriptors.get(root,[])); typ="maven" if any(_classification(Path(x))=="maven" for x in ds) else ("gradle" if ds else "structural")
