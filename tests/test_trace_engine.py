@@ -44,9 +44,10 @@ class TraceEngineTests(unittest.TestCase):
     def test_relationship_filter(self):
         graph, a, _, c = self.graph()
         result = TraceEngine(graph).trace(
-            TraceRequest(a.id, target_id=c.id, allowed_relations=("DEPENDS_ON",), max_depth=2)
+            TraceRequest(a.id, target_id=c.id, excluded_relations=("CONTAINS",), max_depth=2)
         )
         self.assertEqual(result.state, "UNKNOWN")
+        self.assertEqual(result.reason, "NO_PATH")
 
     def test_incoming_trace(self):
         graph, a, _, c = self.graph()
@@ -56,7 +57,7 @@ class TraceEngineTests(unittest.TestCase):
         self.assertEqual(result.state, "CONFIRMED")
 
     def test_ambiguous_trace_is_deterministic(self):
-        graph, a, b, c = self.graph()
+        graph, a, _, c = self.graph()
         d = Node.create("File", "REPO", "file:d", analysis_run_id=self.RUN, revision=self.REV)
         graph.add_node(d)
         graph.add_edge(Edge.create(a, "CONTAINS", d, evidence_refs=("E1",),
