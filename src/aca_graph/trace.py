@@ -283,28 +283,37 @@ class ContradictionDetector:
         self.graph = graph
 
     def detect(self, candidates: tuple[CandidatePath, ...]) -> tuple[dict[str, Any], ...]:
-        claims: dict[tuple[str, str], list[TraceStep]] = {}
-        for candidate in candidates:
-            for step in candidate.steps:
-                claims.setdefault((step.source_node, step.relation), []).append(step)
+        candidate_claims = {
+            (step.source_node, step.relation, step.target_node)
+            for candidate in candidates for step in candidate.steps
+        }
+        edges_by_id = self.graph.edges
         contradictions: list[dict[str, Any]] = []
-        for (source, relation), steps in sorted(claims.items()):
-            targets = {}
-            for step in steps:
-                if step.target_node is not None:
-                    targets.setdefault(step.target_node, set()).update(step.evidence_refs)
-            if len(targets) > 1:
-                claims_data = [
-                    {"target_node": target, "evidence_refs": sorted(refs)}
-                    for target, refs in sorted(targets.items())
-                ]
-                # Only classify as contradiction when each competing target has direct evidence.
-                if all(item["evidence_refs"] for item in claims_data):
-                    contradictions.append({
-                        "source_node": source, "relation": relation,
-                        "claims": claims_data,
-                        "resolution_state": "UNRESOLVED",
-                    })
+        for evidence_id, record in sorted(self.graph.evidence.items()):
+            if not isinstance(record, dict) or record.get("type") != "contradiction":
+                continue
+            edge_ids = tuple(record.get("edge_ids", ()))
+            if len(edge_ids) < 2 or not all(edge_id in edges_by_id for edge_id in edge_ids):
+                continue
+            edges = [edges_by_id[edge_id] for edge_id in edge_ids]
+            claims = [(edge.source, edge.relation, edge.target) for edge in edges]
+            if not all(claim in candidate_claims for claim in claims):
+                continue
+            contradictions.append({
+                "claims": [
+                    {
+                        "source_node": edge.source,
+                        "relation": edge.relation,
+                        "target_node": edge.target,
+                        "evidence_refs": sorted(set(edge.evidence_refs) | {evidence_id}),
+                    }
+                    for edge in edges
+                ],
+                "evidence_refs": [evidence_id],
+                "affected_step": 1,
+                "resolution_state": record.get("resolution_state", "UNRESOLVED"),
+                "reason": record.get("reason", "Explicit evidence identifies conflicting claims."),
+            })
         return tuple(contradictions)
 
 
@@ -312,9 +321,14 @@ class BoundaryClassifier:
     """Classifies only boundaries established by deterministic graph evidence."""
 
     def classify_no_path(self, request: TraceRequest) -> TraceBoundary:
+        boundary_type = "UNSUPPORTED_RELATION" if request.allowed_relations else "MISSING_EVIDENCE"
+        reason = (
+            "No requested relationship was established by available CodeGraph evidence."
+            if boundary_type == "UNSUPPORTED_RELATION"
+            else "No supporting path was established from available CodeGraph evidence."
+        )
         return TraceBoundary(
-            boundary_type="UNRESOLVED_PATH", at_step=None, status="UNKNOWN",
-            reason="No supported path was established from available CodeGraph evidence.",
+            boundary_type=boundary_type, at_step=None, status="UNKNOWN", reason=reason,
         )
 
 
@@ -326,7 +340,7 @@ class TraceEngine:
         self.graph = graph
         self.rule = TraceRule()
         self.evidence_resolver = EvidenceResolver(graph)
-        self.contradiction_detector = ContradictionDetector()
+        self.contradiction_detector = ContradictionDetector(graph)
         self.boundary_classifier = BoundaryClassifier()
 
     def trace(self, request: TraceRequest) -> Trace:
