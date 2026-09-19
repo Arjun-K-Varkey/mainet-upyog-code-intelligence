@@ -79,11 +79,24 @@ class TraceEngineTests(unittest.TestCase):
         from dataclasses import replace
         replacement = replace(edge, evidence_refs=("E_BOUNDARY",))
         graph.edges[replacement.id] = replacement
-        del graph.edges[edge.id]
         result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
         self.assertEqual(result.status, "UNKNOWN")
         self.assertEqual(result.steps[0].status, "UNKNOWN")
         self.assertEqual(result.boundaries[0].boundary_type, "REFLECTION")
+
+    def test_boundary_round_trip_preserves_nested_metadata(self):
+        graph, a, b, _ = self.graph()
+        edge = next(iter(graph.outgoing(a.id)))
+        from dataclasses import replace
+        graph.evidence["E_BOUNDARY"] = {
+            "boundary_type": "reflection",
+            "reason": "Target is reached through reflection.",
+        }
+        graph.edges[edge.id] = replace(edge, evidence_refs=("E_BOUNDARY",))
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
+        restored = Trace.from_dict(result.to_dict())
+        self.assertEqual(restored.steps[0].boundaries[0].boundary_type, "REFLECTION")
+        self.assertEqual(restored.boundaries[0].boundary_type, "REFLECTION")
 
     def test_ambiguous_trace_preserves_alternatives(self):
         graph, a, _, c = self.graph()
