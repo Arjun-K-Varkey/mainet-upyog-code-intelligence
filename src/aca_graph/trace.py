@@ -80,8 +80,9 @@ class CandidatePath:
     status: str
     confidence: float | None
     rationale: str | None = None
+    boundaries: tuple["TraceBoundary", ...] = ()
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict -> dict[str, Any]:
         return {"steps": [s.to_dict() for s in self.steps], "status": self.status,
                 "confidence": self.confidence, "rationale": self.rationale,
                 "boundaries": [b.to_dict() for b in self.boundaries]}
@@ -654,7 +655,9 @@ class TraceEngine:
             ))
         if missing_evidence or boundary_found:
             return CandidatePath(steps=tuple(steps), status="UNKNOWN", confidence=None,
-                                 rationale="At least one material hop is unresolved by evidence or boundary classification.")
+                                 rationale="At least one material hop is unresolved by evidence or boundary classification.",
+            boundaries=tuple(boundaries),
+)
         status = "INFERRED" if confidences else "CONFIRMED"
         confidence = min(confidences) if confidences else None
         return CandidatePath(steps=tuple(steps), status=status, confidence=confidence,
