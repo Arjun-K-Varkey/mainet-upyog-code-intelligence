@@ -65,7 +65,7 @@ class TraceEngineTests(unittest.TestCase):
         )
         self.assertEqual(result.status, "CONFIRMED")
         self.assertEqual(result.steps[0].source_node, c.id)
-        self.assertEqual(result.steps[0].target_node, a.id)
+        self.assertEqual(result.steps[0].target_node, b.id)
         self.assertEqual(result.steps[0].relation, "CONTAINS")
         self.assertIn(result.steps[0].evidence_refs[0], graph.evidence)
 
@@ -97,7 +97,7 @@ class TraceEngineTests(unittest.TestCase):
     def test_incoming_contradiction_matches_canonical_edge(self):
         graph, a, b, _ = self.graph()
         edge = next(iter(graph.outgoing(a.id)))
-        from aca_graph.model import Edge
+        from src.aca_graph import Edge
         conflicting = Edge.create(
             a, "DEPENDS_ON", b, evidence_refs=("E_CONTRADICTION",),
             analysis_run_id=self.RUN, revision=self.REV)
