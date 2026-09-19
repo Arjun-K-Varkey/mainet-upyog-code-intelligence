@@ -24,6 +24,12 @@ def stable_id(prefix: str, canonical_key: str) -> str:
     return f"{prefix}-{hashlib.sha256(canonical_key.encode('utf-8')).hexdigest()[:20]}"
 
 
+def _require_analysis_run(analysis_run_id: str | None) -> str:
+    if not analysis_run_id:
+        raise ValueError("analysis_run_id is required")
+    return analysis_run_id
+
+
 @dataclass(frozen=True)
 class Node:
     id: str
@@ -45,7 +51,8 @@ class Node:
             id=stable_id("NODE", f"{repository_id}:{node_type}:{canonical_key}"),
             type=node_type, repository_id=repository_id, canonical_key=canonical_key,
             properties=properties or {}, evidence_refs=tuple(sorted(set(evidence_refs))),
-            provenance=provenance, analysis_run_id=analysis_run_id, revision=revision,
+            provenance=provenance, analysis_run_id=_require_analysis_run(analysis_run_id),
+            revision=revision,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,11 +80,14 @@ class Edge:
                evidence_refs: Iterable[str] = (), provenance: str = "deterministic",
                confidence: float | None = None, analysis_run_id: str | None = None,
                revision: str | None = None) -> "Edge":
+        run_id = _require_analysis_run(analysis_run_id)
         canonical = f"{source.repository_id}|{source.canonical_key}|{relation}|{target.canonical_key}|{revision or ''}"
-        return cls(id=stable_id("EDGE", canonical), source=source.id, relation=relation,
-                   target=target.id, repository_id=source.repository_id,
-                   evidence_refs=tuple(sorted(set(evidence_refs))), provenance=provenance,
-                   confidence=confidence, analysis_run_id=analysis_run_id, revision=revision)
+        return cls(
+            id=stable_id("EDGE", canonical), source=source.id, relation=relation,
+            target=target.id, repository_id=source.repository_id,
+            evidence_refs=tuple(sorted(set(evidence_refs))), provenance=provenance,
+            confidence=confidence, analysis_run_id=run_id, revision=revision,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {"id": self.id, "source": self.source, "relation": self.relation,
@@ -119,16 +129,27 @@ class Graph:
     def validate(self) -> list[dict[str, str]]:
         errors: list[dict[str, str]] = []
         seen_canonical: set[tuple[str, str, str]] = set()
+
+        if not self.analysis_run_id:
+            errors.append({"code": "MISSING_GRAPH_ANALYSIS_RUN_ID", "id": "graph"})
+
         for node in self.nodes.values():
             if node.type not in NODE_TYPES:
                 errors.append({"code": "INVALID_NODE_TYPE", "id": node.id})
-            if not node.id or not node.repository_id or not node.canonical_key:
+            if not node.id or not node.repository_id or not node.canonical_key or not node.analysis_run_id:
                 errors.append({"code": "MISSING_NODE_IDENTITY", "id": node.id})
             if node.provenance not in PROVENANCE:
                 errors.append({"code": "INVALID_NODE_PROVENANCE", "id": node.id})
+            if node.repository_id != self.repository.get("id"):
+                errors.append({"code": "REPOSITORY_MISMATCH", "id": node.id})
+            if node.revision != self.revision:
+                errors.append({"code": "REVISION_MISMATCH", "id": node.id})
+            if node.analysis_run_id != self.analysis_run_id:
+                errors.append({"code": "ANALYSIS_RUN_MISMATCH", "id": node.id})
             for ref in node.evidence_refs:
                 if ref not in self.evidence:
                     errors.append({"code": "UNRESOLVED_EVIDENCE", "id": node.id, "evidence": ref})
+
         for edge in self.edges.values():
             if edge.source not in self.nodes:
                 errors.append({"code": "ORPHAN_EDGE_SOURCE", "id": edge.id})
@@ -138,14 +159,22 @@ class Graph:
                 errors.append({"code": "INVALID_RELATION", "id": edge.id})
             if edge.provenance not in PROVENANCE:
                 errors.append({"code": "INVALID_EDGE_PROVENANCE", "id": edge.id})
+            if not edge.id or not edge.repository_id or not edge.analysis_run_id:
+                errors.append({"code": "MISSING_EDGE_IDENTITY", "id": edge.id})
             if edge.provenance == "deterministic" and edge.confidence is not None:
                 errors.append({"code": "DETERMINISTIC_CONFIDENCE", "id": edge.id})
             if edge.provenance == "inferred" and edge.confidence is None:
                 errors.append({"code": "INFERRED_MISSING_CONFIDENCE", "id": edge.id})
+            if edge.confidence is not None and not 0.0 <= edge.confidence <= 1.0:
+                errors.append({"code": "INVALID_CONFIDENCE", "id": edge.id})
             if edge.source in self.nodes and edge.target in self.nodes:
                 src, tgt = self.nodes[edge.source], self.nodes[edge.target]
                 if src.repository_id != edge.repository_id or tgt.repository_id != edge.repository_id:
                     errors.append({"code": "REPOSITORY_MISMATCH", "id": edge.id})
+                if edge.revision != self.revision:
+                    errors.append({"code": "REVISION_MISMATCH", "id": edge.id})
+                if edge.analysis_run_id != self.analysis_run_id:
+                    errors.append({"code": "ANALYSIS_RUN_MISMATCH", "id": edge.id})
                 key = (edge.source, edge.relation, edge.target)
                 if key in seen_canonical:
                     errors.append({"code": "DUPLICATE_CANONICAL_EDGE", "id": edge.id})
