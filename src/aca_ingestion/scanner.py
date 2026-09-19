@@ -108,14 +108,94 @@ def _structural_roots(result):
     return roots
 
 def _java_package(data: bytes) -> str | None:
+    """Extract the first Java package declaration outside comments/literals."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return None
-    for line in text.splitlines():
-        stripped=line.strip()
-        if stripped.startswith("package ") and stripped.endswith(";"):
-            return stripped[len("package "):-1].strip()
+
+    i = 0
+    n = len(text)
+    state = "code"
+    token = []
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if state == "code":
+            if ch == "/" and nxt == "/":
+                state = "line_comment"
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                state = "block_comment"
+                i += 2
+                continue
+            if ch == '"':
+                state = "string"
+                i += 1
+                continue
+            if ch == "'":
+                state = "char"
+                i += 1
+                continue
+            if ch == "p" and text.startswith("package", i):
+                before = text[i - 1] if i else ""
+                after = text[i + len("package")] if i + len("package") < n else ""
+                if (not (before.isalnum() or before in "_$")) and (after.isspace()):
+                    j = i + len("package")
+                    while j < n and text[j].isspace():
+                        j += 1
+                    start = j
+                    while j < n and text[j] not in ";\\n\\r":
+                        if text[j] == "/" and j + 1 < n and text[j + 1] in "/*":
+                            break
+                        j += 1
+                    candidate = text[start:j].strip()
+                    if candidate and j < n and text[j] == ";":
+                        if all(
+                            part and (part[0].isalpha() or part[0] in "_$")
+                            and all(c.isalnum() or c in "_$" for c in part)
+                            for part in candidate.split(".")
+                        ):
+                            return candidate
+            i += 1
+            continue
+
+        if state == "line_comment":
+            if ch in "\\n\\r":
+                state = "code"
+            i += 1
+            continue
+
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                state = "code"
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if state == "string":
+            if ch == "\\\\":
+                i += 2
+            elif ch == '"':
+                state = "code"
+                i += 1
+            else:
+                i += 1
+            continue
+
+        if state == "char":
+            if ch == "\\\\":
+                i += 2
+            elif ch == "'":
+                state = "code"
+                i += 1
+            else:
+                i += 1
+            continue
+
     return None
 
 class RepositoryScanner:
