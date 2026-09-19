@@ -23,7 +23,7 @@ class ScanConfig:
 @dataclass(frozen=True)
 class FileRecord:
     path: str; kind: str; size: int; sha256: str; line_count: int | None
-    generated: bool; vendor: bool; evidence_id: str
+    generated: bool; vendor: bool; evidence_id: str; package_name: str | None = None
 
 @dataclass(frozen=True)
 class ModuleRecord:
@@ -85,7 +85,7 @@ def _detect_vcs(root):
     return "none"
 
 def _fingerprint(files):
-    canonical="\n".join(f"{r.path}\0{r.kind}\0{r.size}\0{r.sha256}\0{r.line_count}\0{r.generated}\0{r.vendor}" for r in sorted(files,key=lambda x:x.path))
+    canonical="\n".join(f"{r.path}\0{r.kind}\0{r.size}\0{r.sha256}\0{r.line_count}\0{r.generated}\0{r.vendor}\0{r.package_name or ''}" for r in sorted(files,key=lambda x:x.path))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 def _detect_roots(module_root, result):
@@ -107,8 +107,19 @@ def _structural_roots(result):
                 if p[i:i+2]==list(marker): roots.add("/".join(p[:i]) or ".")
     return roots
 
+def _java_package(data: bytes) -> str | None:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    for line in text.splitlines():
+        stripped=line.strip()
+        if stripped.startswith("package ") and stripped.endswith(";"):
+            return stripped[len("package "):-1].strip()
+    return None
+
 class RepositoryScanner:
-    TOOL_VERSION="aca-ingestion-0.3"
+    TOOL_VERSION="aca-ingestion-0.4"
     def __init__(self, config=None): self.config=config or ScanConfig()
     def scan(self, repository):
         root=Path(repository).resolve(strict=True)
@@ -124,14 +135,17 @@ class RepositoryScanner:
                 data=path.read_bytes(); digest=hashlib.sha256(data).hexdigest()
                 try: lines=len(data.decode("utf-8").splitlines())
                 except UnicodeDecodeError: lines=None; errors.append({"path":rel,"code":"NON_UTF8","message":"UTF-8 line count not safely determinable"})
+                kind=_classification(path)
+                package_name=_java_package(data) if kind=="java" else None
                 evidence_id=_stable_id("EVID",f"file:{rel}:{digest}")
-                files.append(FileRecord(rel,_classification(path),size,digest,lines,_is_generated(rel,self.config),_is_vendor(rel,self.config),evidence_id))
+                files.append(FileRecord(rel,kind,size,digest,lines,_is_generated(rel,self.config),_is_vendor(rel,self.config),evidence_id,package_name))
             except (OSError,PermissionError) as exc: errors.append({"path":rel,"code":"UNREADABLE","message":str(exc)})
         files.sort(key=lambda r:r.path); inventory=_fingerprint(files)
         repo_id=self.config.repository_id or _stable_id("REPO",f"revision:{revision or 'content'}:{inventory}")
         workspace_id=_stable_id("WS",f"{repo_id}:{root.name}"); run_id=_stable_id("RUN",f"{repo_id}:{revision or inventory}:{config_hash}:{self.TOOL_VERSION}")
         result=ScanResult({"id":repo_id,"workspace_id":workspace_id,"source_path":root.as_posix(),"vcs":vcs,"revision":revision,"scan_timestamp":timestamp,"tool_version":self.TOOL_VERSION,"configuration_fingerprint":config_hash,"version_metadata":self.config.version_metadata},files=files,errors=errors)
-        for r in result.files: result.evidence.append(EvidenceRecord(r.evidence_id,"source",r.path,r.path,{"classification":r.kind,"size":r.size,"sha256":r.sha256,"generated":r.generated,"vendor":r.vendor},repository_id=repo_id,revision=revision,run_id=run_id,tool_version=self.TOOL_VERSION))
+        for r in result.files:
+            result.evidence.append(EvidenceRecord(r.evidence_id,"source",r.path,r.path,{"classification":r.kind,"size":r.size,"sha256":r.sha256,"generated":r.generated,"vendor":r.vendor,"package_name":r.package_name},repository_id=repo_id,revision=revision,run_id=run_id,tool_version=self.TOOL_VERSION))
         for e in result.errors:
             eid=_stable_id("EVID",f"error:{e['code']}:{e['path']}:{e.get('message','')}:{e.get('size','')}")
             result.evidence.append(EvidenceRecord(eid,"error",e["path"],e["path"],dict(e),status="warning",repository_id=repo_id,revision=revision,run_id=run_id,tool_version=self.TOOL_VERSION))
@@ -141,7 +155,7 @@ class RepositoryScanner:
     def _detect_modules(self,result,repo_id,revision,run_id):
         descriptors={}
         for r in result.files:
-            if r.kind in {"maven","gradle"}: descriptors.setdefault(str(Path(r.path).parent).replace("\\","/"),[]).append(r.path)
+            if r.kind in {"maven","gradle"}: descriptors.setdefault(str(Path(r.path).parent).replace("\","/"),[]).append(r.path)
         roots=set(descriptors)|_structural_roots(result); modules=[]
         for root in sorted(roots):
             ds=sorted(descriptors.get(root,[])); typ="maven" if any(_classification(Path(x))=="maven" for x in ds) else ("gradle" if ds else "structural")
