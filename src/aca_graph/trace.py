@@ -84,7 +84,7 @@ class CandidatePath:
     rationale: str | None = None
     boundaries: tuple["TraceBoundary", ...] = ()
 
-    def to_dict -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"steps": [s.to_dict() for s in self.steps], "status": self.status,
                 "confidence": self.confidence, "rationale": self.rationale,
                 "boundaries": [b.to_dict() for b in self.boundaries]}
