@@ -119,6 +119,12 @@ class Graph:
         if not self.analysis_run_id: errors.append({"code":"MISSING_GRAPH_ANALYSIS_RUN_ID","id":"graph"})
         for node in self.nodes.values():
             if node.type not in NODE_TYPES: errors.append({"code":"INVALID_NODE_TYPE","id":node.id})
+            expected_node_id = stable_id(
+                "NODE",
+                f"{_identity_context(node.repository_id, node.revision)}|{node.type}|{node.canonical_key}",
+            )
+            if node.id != expected_node_id:
+                errors.append({"code":"NODE_ID_MISMATCH","id":node.id,"expected":expected_node_id})
             if not node.id or not node.repository_id or not node.canonical_key or not node.analysis_run_id: errors.append({"code":"MISSING_NODE_IDENTITY","id":node.id})
             if node.provenance not in PROVENANCE: errors.append({"code":"INVALID_NODE_PROVENANCE","id":node.id})
             if node.repository_id != self.repository.get("id"): errors.append({"code":"REPOSITORY_MISMATCH","id":node.id})
@@ -138,6 +144,13 @@ class Graph:
             if edge.confidence is not None and not 0.0 <= edge.confidence <= 1.0: errors.append({"code":"INVALID_CONFIDENCE","id":edge.id})
             if edge.source in self.nodes and edge.target in self.nodes:
                 src,tgt=self.nodes[edge.source],self.nodes[edge.target]
+                expected_edge_id = stable_id(
+                    "EDGE",
+                    f"{_identity_context(edge.repository_id, edge.revision)}|"
+                    f"{src.canonical_key}|{edge.relation}|{tgt.canonical_key}",
+                )
+                if edge.id != expected_edge_id:
+                    errors.append({"code":"EDGE_ID_MISMATCH","id":edge.id,"expected":expected_edge_id})
                 if src.repository_id!=edge.repository_id or tgt.repository_id!=edge.repository_id: errors.append({"code":"REPOSITORY_MISMATCH","id":edge.id})
                 if edge.revision!=self.revision: errors.append({"code":"REVISION_MISMATCH","id":edge.id})
                 if src.revision!=edge.revision: errors.append({"code":"SOURCE_REVISION_MISMATCH","id":edge.id})
