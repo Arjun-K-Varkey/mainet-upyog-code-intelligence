@@ -357,6 +357,8 @@ class TraceEngine:
                 evidence_refs=tuple(sorted({
                     ref for contradiction in contradictions for claim in contradiction["claims"]
                     for ref in claim["evidence_refs"]
+                } | {
+                    ref for contradiction in contradictions for ref in contradiction.get("evidence_refs", [])
                 })),
             ),)
         elif not candidates:
