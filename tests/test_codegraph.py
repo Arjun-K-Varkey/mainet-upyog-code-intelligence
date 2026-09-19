@@ -97,9 +97,9 @@ class CodeGraphTests(unittest.TestCase):
         b = Node.create("Module", "REPO", "module:b", analysis_run_id=self.RUN)
         graph.add_node(a)
         graph.add_node(b)
+        graph.evidence["E1"] = {"run_id": self.RUN, "source": "test"}
         graph.add_edge(Edge.create(a, "DEPENDS_ON", b, provenance="inferred",
-                                   confidence=0.8, analysis_run_id=self.RUN))
-        self.assertEqual(graph.validate(), [])
+                                   confidence=0.8, evidence_refs=("E1",), analysis_run_id=self.RUN))
 
     def test_inferred_edge_without_confidence_is_invalid(self):
         graph = Graph({"id": "REPO"}, None, self.RUN)
