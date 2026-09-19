@@ -49,7 +49,7 @@ class TraceEngineTests(unittest.TestCase):
         graph, a, _, c = self.graph()
         result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=c.id, max_depth=1))
         self.assertEqual(result.status, "UNKNOWN")
-        self.assertEqual(result.boundaries[0].boundary_type, "UNRESOLVED_PATH")
+        self.assertEqual(result.boundaries[0].boundary_type, "MISSING_EVIDENCE")
 
     def test_relationship_filter(self):
         graph, a, _, c = self.graph()
