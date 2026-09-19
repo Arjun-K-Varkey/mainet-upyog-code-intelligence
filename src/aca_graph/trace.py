@@ -277,29 +277,33 @@ class EvidenceResolver:
 
 
 class ContradictionDetector:
-    """Detects explicit conflicting graph claims without treating alternatives as contradictions."""
+    """Derive contradictions only from explicit evidence claims."""
 
     def __init__(self, graph: Graph):
         self.graph = graph
 
     def detect(self, candidates: tuple[CandidatePath, ...]) -> tuple[dict[str, Any], ...]:
-        candidate_claims = {
+        candidate_edges = {
             (step.source_node, step.relation, step.target_node)
-            for candidate in candidates for step in candidate.steps
+            for candidate in candidates
+            for step in candidate.steps
         }
-        edges_by_id = self.graph.edges
-        contradictions: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for evidence_id, record in sorted(self.graph.evidence.items()):
             if not isinstance(record, dict) or record.get("type") != "contradiction":
                 continue
             edge_ids = tuple(record.get("edge_ids", ()))
-            if len(edge_ids) < 2 or not all(edge_id in edges_by_id for edge_id in edge_ids):
+            if len(edge_ids) < 2 or not all(edge_id in self.graph.edges for edge_id in edge_ids):
                 continue
-            edges = [edges_by_id[edge_id] for edge_id in edge_ids]
-            claims = [(edge.source, edge.relation, edge.target) for edge in edges]
-            if not all(claim in candidate_claims for claim in claims):
+            edges = [self.graph.edges[eid] for eid in edge_ids]
+            claims = [
+                (edge.source, edge.relation, edge.target)
+                for edge in edges
+            ]
+            if not all(claim in candidate_edges for claim in claims):
                 continue
-            contradictions.append({
+            results.append({
+                "affected_step": record.get("affected_step"),
                 "claims": [
                     {
                         "source_node": edge.source,
@@ -310,26 +314,95 @@ class ContradictionDetector:
                     for edge in edges
                 ],
                 "evidence_refs": [evidence_id],
-                "affected_step": 1,
                 "resolution_state": record.get("resolution_state", "UNRESOLVED"),
-                "reason": record.get("reason", "Explicit evidence identifies conflicting claims."),
+                "reason": record.get(
+                    "reason",
+                    "Explicit evidence identifies conflicting claims.",
+                ),
             })
-        return tuple(contradictions)
+        return tuple(results)
 
 
 class BoundaryClassifier:
-    """Classifies only boundaries established by deterministic graph evidence."""
+    """Classifies unresolved boundaries from explicit evidence or deterministic context."""
+
+    _ALIASES = {
+        "reflection": "REFLECTION",
+        "dynamic_dispatch": "DYNAMIC_DISPATCH",
+        "generated_code_unavailable": "GENERATED_CODE_UNAVAILABLE",
+        "external_system": "EXTERNAL_SYSTEM",
+        "database_mapping_unresolved": "DATABASE_MAPPING_UNRESOLVED",
+        "missing_evidence": "MISSING_EVIDENCE",
+        "unreadable_evidence": "UNREADABLE_EVIDENCE",
+    }
 
     def classify_no_path(self, request: TraceRequest) -> TraceBoundary:
-        boundary_type = "UNSUPPORTED_RELATION" if request.allowed_relations else "MISSING_EVIDENCE"
-        reason = (
-            "No requested relationship was established by available CodeGraph evidence."
-            if boundary_type == "UNSUPPORTED_RELATION"
-            else "No supporting path was established from available CodeGraph evidence."
-        )
         return TraceBoundary(
-            boundary_type=boundary_type, at_step=None, status="UNKNOWN", reason=reason,
+            boundary_type="UNSUPPORTED_RELATION" if request.allowed_relations else "MISSING_EVIDENCE",
+            at_step=None,
+            status="UNKNOWN",
+            reason=(
+                "No requested relationship was established by available CodeGraph evidence."
+                if request.allowed_relations
+                else "No supporting path was established from available CodeGraph evidence."
+            ),
         )
+
+    def classify_edge(self, edge: Edge, graph: Graph, sequence: int) -> TraceBoundary | None:
+        for ref in sorted(edge.evidence_refs):
+            record = graph.evidence.get(ref)
+            if not isinstance(record, dict):
+                continue
+            boundary = record.get("boundary_type") or record.get("boundary")
+            if boundary in self._ALIASES:
+                return TraceBoundary(
+                    boundary_type=self._ALIASES[boundary],
+                    at_step=sequence,
+                    status="UNKNOWN",
+                    reason=record.get("reason", f"Evidence identifies {self._ALIASES[boundary]}."),
+                    evidence_refs=(ref,),
+                )
+        return None
+
+
+class TraceRuleRegistry:
+    """Versioned deterministic rule registry.
+
+    Rules are intentionally generic in ACA-TRACE-001's first implementation.
+    Framework-specific JSP/Spring/JPA rules can be registered later without
+    changing the canonical trace model.
+    """
+
+    def __init__(self, rules: tuple[TraceRule, ...] = (TraceRule(),)):
+        self.rules = tuple(sorted(rules, key=lambda rule: (rule.name, rule.version)))
+
+    def classify(self, edge: Edge) -> tuple[str, str, float | None]:
+        classifications = [rule.classify(edge) for rule in self.rules]
+        if not classifications:
+            raise TraceValidationError("NO_TRACE_RULE")
+        return classifications[0]
+
+    @property
+    def version(self) -> str:
+        return "+".join(f"{rule.name}:{rule.version}" for rule in self.rules)
+
+
+class TraceClassifier:
+    """Classifies a candidate set after evidence and boundary analysis."""
+
+    def classify(
+        self,
+        candidates: tuple[CandidatePath, ...],
+        contradictions: tuple[dict[str, Any], ...],
+    ) -> tuple[str, tuple[TraceStep, ...], tuple[CandidatePath, ...], float | None]:
+        if contradictions:
+            return "CONTRADICTED", (), candidates, None
+        if not candidates:
+            return "UNKNOWN", (), (), None
+        if len(candidates) > 1:
+            return "AMBIGUOUS", (), candidates, None
+        candidate = candidates[0]
+        return candidate.status, candidate.steps, (), candidate.confidence
 
 
 class TraceEngine:
