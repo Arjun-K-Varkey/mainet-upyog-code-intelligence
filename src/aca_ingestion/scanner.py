@@ -117,7 +117,6 @@ def _java_package(data: bytes) -> str | None:
     i = 0
     n = len(text)
     state = "code"
-    token = []
     while i < n:
         ch = text[i]
         nxt = text[i + 1] if i + 1 < n else ""
@@ -142,28 +141,29 @@ def _java_package(data: bytes) -> str | None:
             if ch == "p" and text.startswith("package", i):
                 before = text[i - 1] if i else ""
                 after = text[i + len("package")] if i + len("package") < n else ""
-                if (not (before.isalnum() or before in "_$")) and (after.isspace()):
+                if (not (before.isalnum() or before in "_$")) and after.isspace():
                     j = i + len("package")
                     while j < n and text[j].isspace():
                         j += 1
                     start = j
-                    while j < n and text[j] not in ";\\n\\r":
+                    while j < n and text[j] not in ";\n\r":
                         if text[j] == "/" and j + 1 < n and text[j + 1] in "/*":
                             break
                         j += 1
                     candidate = text[start:j].strip()
                     if candidate and j < n and text[j] == ";":
+                        parts = candidate.split(".")
                         if all(
                             part and (part[0].isalpha() or part[0] in "_$")
                             and all(c.isalnum() or c in "_$" for c in part)
-                            for part in candidate.split(".")
+                            for part in parts
                         ):
                             return candidate
             i += 1
             continue
 
         if state == "line_comment":
-            if ch in "\\n\\r":
+            if ch in "\n\r":
                 state = "code"
             i += 1
             continue
@@ -177,7 +177,7 @@ def _java_package(data: bytes) -> str | None:
             continue
 
         if state == "string":
-            if ch == "\\\\":
+            if ch == "\\":
                 i += 2
             elif ch == '"':
                 state = "code"
@@ -187,7 +187,7 @@ def _java_package(data: bytes) -> str | None:
             continue
 
         if state == "char":
-            if ch == "\\\\":
+            if ch == "\\":
                 i += 2
             elif ch == "'":
                 state = "code"
