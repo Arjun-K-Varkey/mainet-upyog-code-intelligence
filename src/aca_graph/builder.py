@@ -109,6 +109,10 @@ def build_from_ingestion(result: Any) -> Graph:
             )
             graph.add_node(pkg_node)
             graph.add_edge(Edge.create(
+                parent_node, "CONTAINS", pkg_node,
+                evidence_refs=_evidence(record), analysis_run_id=run_id, revision=revision,
+            ))
+            graph.add_edge(Edge.create(
                 pkg_node, "CONTAINS", node,
                 evidence_refs=_evidence(record), analysis_run_id=run_id, revision=revision,
             ))
