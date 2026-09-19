@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.aca_graph import Graph, Node, Edge, build_from_ingestion
+from src.aca_graph import Edge, Graph, Node, build_from_ingestion
 from src.aca_ingestion.scanner import RepositoryScanner
 
 
@@ -17,21 +17,30 @@ def fixture(root: Path) -> Path:
 
 
 class CodeGraphTests(unittest.TestCase):
+    RUN = "RUN"
+
     def test_node_and_edge_identity_are_stable(self):
-        a = Node.create("File", "REPO", "file:src/App.java")
-        b = Node.create("File", "REPO", "file:src/App.java")
+        a = Node.create("File", "REPO", "file:src/App.java", analysis_run_id=self.RUN)
+        b = Node.create("File", "REPO", "file:src/App.java", analysis_run_id=self.RUN)
         self.assertEqual(a.id, b.id)
-        edge1 = Edge.create(a, "CONTAINS", b)
-        edge2 = Edge.create(a, "CONTAINS", b)
+        edge1 = Edge.create(a, "CONTAINS", b, analysis_run_id=self.RUN)
+        edge2 = Edge.create(a, "CONTAINS", b, analysis_run_id=self.RUN)
         self.assertEqual(edge1.id, edge2.id)
 
+    def test_analysis_run_identity_is_required(self):
+        with self.assertRaises(ValueError):
+            Node.create("File", "REPO", "file:src/App.java")
+        a = Node.create("File", "REPO", "file:a", analysis_run_id=self.RUN)
+        with self.assertRaises(ValueError):
+            Edge.create(a, "CONTAINS", a)
+
     def test_graph_validation_and_traversal(self):
-        graph = Graph({"id": "REPO"}, None, "RUN")
-        a = Node.create("Module", "REPO", "module:a")
-        b = Node.create("File", "REPO", "file:a/App.java")
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN)
+        b = Node.create("File", "REPO", "file:a/App.java", analysis_run_id=self.RUN)
         graph.add_node(a)
         graph.add_node(b)
-        graph.add_edge(Edge.create(a, "CONTAINS", b))
+        graph.add_edge(Edge.create(a, "CONTAINS", b, analysis_run_id=self.RUN))
         self.assertEqual(graph.validate(), [])
         self.assertEqual(graph.outgoing(a.id)[0].target, b.id)
         self.assertEqual(graph.incoming(b.id)[0].source, a.id)
@@ -39,14 +48,21 @@ class CodeGraphTests(unittest.TestCase):
         self.assertEqual(graph.paths(a.id, b.id, 1), [[a.id, b.id]])
 
     def test_validation_rejects_orphan_and_bad_provenance(self):
-        graph = Graph({"id": "REPO"}, None, "RUN")
-        a = Node.create("Module", "REPO", "module:a")
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN)
         graph.add_node(a)
         graph.add_edge(Edge(
             id="EDGE-BAD", source=a.id, relation="CONTAINS", target="NODE-MISSING",
-            repository_id="REPO", provenance="deterministic"
+            repository_id="REPO", provenance="deterministic", analysis_run_id=self.RUN
         ))
         self.assertTrue(any(e["code"] == "ORPHAN_EDGE_TARGET" for e in graph.validate()))
+
+    def test_validation_rejects_missing_analysis_run_even_if_constructed_directly(self):
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node(id="NODE-A", type="Module", repository_id="REPO",
+                 canonical_key="module:a", analysis_run_id=None)
+        graph.add_node(a)
+        self.assertTrue(any(e["code"] == "MISSING_NODE_IDENTITY" for e in graph.validate()))
 
     def test_ingestion_build_produces_evidence_backed_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -55,6 +71,8 @@ class CodeGraphTests(unittest.TestCase):
             self.assertEqual(graph.validate(), [])
             self.assertTrue(any(n.type == "Repository" for n in graph.nodes.values()))
             self.assertTrue(any(n.type == "Module" for n in graph.nodes.values()))
+            self.assertTrue(any(n.type == "Package" and n.properties["name"] == "com.example"
+                                for n in graph.nodes.values()))
             self.assertTrue(any(n.type == "File" for n in graph.nodes.values()))
             self.assertTrue(graph.edges)
             self.assertTrue(graph.evidence)
@@ -69,25 +87,39 @@ class CodeGraphTests(unittest.TestCase):
             json.loads(graph1.to_json())
 
     def test_identity_does_not_depend_on_absolute_checkout_path(self):
-        left = Node.create("File", "REPO", "file:module/App.java")
-        right = Node.create("File", "REPO", "file:module/App.java")
+        left = Node.create("File", "REPO", "file:module/App.java", analysis_run_id=self.RUN)
+        right = Node.create("File", "REPO", "file:module/App.java", analysis_run_id=self.RUN)
         self.assertEqual(left.id, right.id)
 
     def test_inferred_edge_requires_confidence(self):
-        graph = Graph({"id": "REPO"}, None, "RUN")
-        a = Node.create("Module", "REPO", "module:a")
-        b = Node.create("Module", "REPO", "module:b")
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN)
+        b = Node.create("Module", "REPO", "module:b", analysis_run_id=self.RUN)
         graph.add_node(a)
         graph.add_node(b)
-        graph.add_edge(Edge.create(a, "DEPENDS_ON", b, provenance="inferred", confidence=0.8))
+        graph.add_edge(Edge.create(a, "DEPENDS_ON", b, provenance="inferred",
+                                   confidence=0.8, analysis_run_id=self.RUN))
         self.assertEqual(graph.validate(), [])
+
+    def test_inferred_edge_without_confidence_is_invalid(self):
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN)
+        b = Node.create("Module", "REPO", "module:b", analysis_run_id=self.RUN)
+        graph.add_node(a)
+        graph.add_node(b)
+        graph.add_edge(Edge(id="EDGE-INFERRED", source=a.id, relation="DEPENDS_ON",
+                            target=b.id, repository_id="REPO", provenance="inferred",
+                            analysis_run_id=self.RUN))
+        self.assertTrue(any(e["code"] == "INFERRED_MISSING_CONFIDENCE" for e in graph.validate()))
 
     def test_read_only_ingestion_to_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(Path(tmp))
-            before = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            before = {p.relative_to(root).as_posix(): p.read_bytes()
+                      for p in root.rglob("*") if p.is_file()}
             build_from_ingestion(RepositoryScanner().scan(root))
-            after = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            after = {p.relative_to(root).as_posix(): p.read_bytes()
+                     for p in root.rglob("*") if p.is_file()}
             self.assertEqual(before, after)
 
 
