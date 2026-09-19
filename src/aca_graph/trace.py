@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Any
 
-from .model import Edge, Graph, NODE_TYPES, RELATIONS, NODE_TYPES, RELATIONS
+from .model import Edge, Graph, NODE_TYPES, RELATIONS
 
 TRACE_SCHEMA_VERSION = "aca-trace-0.1"
 METHODOLOGY_VERSION = "aca-trace-method-0.2"
@@ -153,6 +153,20 @@ class Trace:
                         add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
                     if step.target_node is not None and graph.find_node(step.target_node) is None:
                         add("MISSING_TARGET_NODE", f"{context} step {step.step_id} target node does not exist")
+
+        if not self.repository_id:
+            add("MISSING_REPOSITORY_ID", "repository_id is required")
+        if not self.analysis_run_id:
+            add("MISSING_ANALYSIS_RUN_ID", "analysis_run_id is required")
+        if graph is not None:
+            if self.repository_id != graph.repository["id"]:
+                add("REPOSITORY_CONTEXT_MISMATCH", "trace repository does not match graph")
+            if self.revision != graph.revision:
+                add("REVISION_CONTEXT_MISMATCH", "trace revision does not match graph")
+            if graph.find_node(self.origin) is None:
+                add("MISSING_ORIGIN_NODE", "trace origin does not exist in graph")
+            if self.target is not None and graph.find_node(self.target) is None:
+                add("MISSING_TARGET_NODE", "trace target does not exist in graph")
 
         if self.status not in TRACE_STATES:
             add("INVALID_STATUS", f"unsupported trace status: {self.status}")
@@ -558,13 +572,13 @@ class TraceEngine:
         if unsupported_types:
             raise TraceValidationError("UNSUPPORTED_NODE_TYPE_FILTER:" + ",".join(sorted(unsupported_types)))
 
-    def _edges_from(self, node_id: str, direction: str) -> list[tuple[Edge, str]]:
+    def _edges_from(self, node_id: str, direction: str) -> list[tuple[Edge, str, str]]:
         edges = []
         if direction in {"OUTGOING", "BOTH"}:
-            edges.extend((edge, edge.target) for edge in self.graph.outgoing(node_id))
+            edges.extend((edge, edge.target, "OUTGOING") for edge in self.graph.outgoing(node_id))
         if direction in {"INCOMING", "BOTH"}:
-            edges.extend((edge, edge.source) for edge in self.graph.incoming(node_id))
-        return sorted(edges, key=lambda item: (item[0].id, item[1]))
+            edges.extend((edge, edge.source, "INCOMING") for edge in self.graph.incoming(node_id))
+        return sorted(edges, key=lambda item: (item[0].id, item[1], item[2]))
 
     def _edge_allowed(self, edge: Edge, request: TraceRequest) -> bool:
         if request.allowed_relations and edge.relation not in request.allowed_relations:
@@ -593,39 +607,50 @@ class TraceEngine:
                 results.append((node_ids, edges))
             if len(edges) >= request.max_depth:
                 continue
-            for edge, next_node in self._edges_from(current, request.direction):
+            for edge, next_node, orientation in self._edges_from(current, request.direction):
                 if not self._edge_allowed(edge, request) or next_node in node_ids:
                     continue
-                queue.append((node_ids + (next_node,), edges + (edge,)))
+                queue.append((node_ids + (next_node,), edges + ((edge, orientation),)))
         return results, bool(queue)
 
-    def _candidate_path(self, node_ids: tuple[str, ...], edges: tuple[Edge, ...]) -> CandidatePath:
+    def _candidate_path(self, node_ids: tuple[str, ...], edges: tuple[tuple[Edge, str], ...]) -> CandidatePath:
         steps = []
         confidences = []
         missing_evidence = False
-        for sequence, edge in enumerate(edges, 1):
+        boundary_found = False
+        for sequence, (edge, orientation) in enumerate(edges, 1):
             status, provenance, confidence = self.rule.classify(edge)
             evidence = self.evidence_resolver.resolve(tuple(sorted(edge.evidence_refs)))
+            boundary = self.boundary_classifier.classify_edge(edge, self.graph, sequence)
+            if boundary is not None:
+                boundary_found = True
+                status, provenance, confidence = "UNKNOWN", "deterministic", None
             if not evidence:
                 missing_evidence = True
                 status, provenance, confidence = "UNKNOWN", "deterministic", None
-            elif confidence is not None:
+            elif confidence is not None and status != "UNKNOWN":
                 confidences.append(confidence)
+            source_node, target_node = (
+                (edge.source, edge.target) if orientation == "OUTGOING"
+                else (edge.target, edge.source)
+            )
             steps.append(TraceStep(
-                step_id=self._step_id(sequence, node_ids[sequence - 1], edge),
-                sequence=sequence, source_node=node_ids[sequence - 1],
-                relation=edge.relation, target_node=node_ids[sequence],
+                step_id=self._step_id(sequence, source_node, edge, orientation),
+                sequence=sequence, source_node=source_node,
+                relation=edge.relation, target_node=target_node,
                 status=status, provenance=provenance, confidence=confidence,
                 evidence_refs=evidence,
-                rationale=("Material hop lacks resolvable supporting evidence."
+                rationale=("Explicit boundary evidence prevents asserting this hop."
+                           if boundary is not None else
+                           "Material hop lacks resolvable supporting evidence."
                            if not evidence else
                            "Canonical CodeGraph relationship established deterministically."
                            if status == "CONFIRMED" else
                            "Canonical CodeGraph relationship is inferred."),
             ))
-        if missing_evidence:
+        if missing_evidence or boundary_found:
             return CandidatePath(steps=tuple(steps), status="UNKNOWN", confidence=None,
-                                 rationale="At least one material hop lacks resolvable evidence.")
+                                 rationale="At least one material hop is unresolved by evidence or boundary classification.")
         status = "INFERRED" if confidences else "CONFIRMED"
         confidence = min(confidences) if confidences else None
         return CandidatePath(steps=tuple(steps), status=status, confidence=confidence,
