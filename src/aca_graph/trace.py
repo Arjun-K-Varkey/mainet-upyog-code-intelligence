@@ -594,7 +594,7 @@ class TraceEngine:
             return False
         return True
 
-    def _enumerate_paths(self, request: TraceRequest) -> tuple[list[tuple[tuple[str, ...], tuple[Edge, ...]]], bool]:
+    def _enumerate_paths(self, request: TraceRequest) -> tuple[list[tuple[tuple[str, ...], tuple[tuple[Edge, str], ...]]], bool]:
         queue = [((request.source_id,), ())]
         results = []
         while queue and len(results) < request.max_paths:
@@ -657,9 +657,11 @@ class TraceEngine:
                              rationale=None if status == "CONFIRMED" else "At least one hop is inferred.")
 
     @staticmethod
-    def _step_id(sequence: int, source_node: str, edge: Edge) -> str:
+    def _step_id(sequence: int, source_node: str, edge: Edge, orientation: str = "OUTGOING") -> str:
+        target_node = edge.target if orientation == "OUTGOING" else edge.source
         payload = {"schema": TRACE_SCHEMA_VERSION, "sequence": sequence,
-                   "source": source_node, "relation": edge.relation, "target": edge.target}
+                   "source": source_node, "relation": edge.relation, "target": target_node,
+                   "orientation": orientation}
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return f"STEP-{digest[:20]}"
 
