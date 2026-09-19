@@ -192,6 +192,28 @@ class Trace:
                 if step.target_node is not None and graph.find_node(step.target_node) is None:
                     add("MISSING_TARGET_NODE", f"step {step.step_id} target node does not exist")
 
+        for index, contradiction in enumerate(self.contradictions, 1):
+            if not isinstance(contradiction, dict):
+                add("INVALID_CONTRADICTION", f"contradiction {index} must be an object")
+                continue
+            claims = contradiction.get("claims")
+            refs = contradiction.get("evidence_refs")
+            if not isinstance(claims, list) or len(claims) < 2:
+                add("CONTRADICTION_MISSING_CLAIMS", f"contradiction {index} requires at least two conflicting claims")
+            else:
+                for claim_index, claim in enumerate(claims, 1):
+                    if not isinstance(claim, dict) or not all(claim.get(k) for k in ("source_node", "relation", "target_node")):
+                        add("INVALID_CONTRADICTION_CLAIM", f"contradiction {index} claim {claim_index} is incomplete")
+                    claim_refs = claim.get("evidence_refs", []) if isinstance(claim, dict) else []
+                    if not claim_refs or not set(claim_refs).issubset(evidence_set):
+                        add("UNRESOLVED_CONTRADICTION_EVIDENCE", f"contradiction {index} claim {claim_index} evidence does not resolve")
+            if not contradiction.get("affected_step"):
+                add("CONTRADICTION_MISSING_AFFECTED_STEP", f"contradiction {index} requires affected_step")
+            if not isinstance(refs, list) or not refs or not set(refs).issubset(evidence_set):
+                add("UNRESOLVED_CONTRADICTION_EVIDENCE", f"contradiction {index} evidence does not resolve")
+            if not contradiction.get("resolution_state"):
+                add("CONTRADICTION_MISSING_RESOLUTION", f"contradiction {index} requires resolution_state")
+
         for boundary in self.boundaries:
             if boundary.boundary_type not in BOUNDARY_TYPES:
                 add("INVALID_BOUNDARY_TYPE", f"unsupported boundary type: {boundary.boundary_type}")
