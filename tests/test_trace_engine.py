@@ -172,6 +172,9 @@ class TraceEngineTests(unittest.TestCase):
         with self.assertRaises(TraceValidationError):
             Trace.from_dict(data, graph=graph)
 
+        public_errors = __import__("src.aca_graph.trace", fromlist=["validate_trace_dict"]).validate_trace_dict(data, graph=graph)
+        self.assertTrue(public_errors)
+
     def test_incoming_edge_identity_rejects_wrong_orientation(self):
         graph, a, b, _ = self.graph()
         result = TraceEngine(graph).trace(
