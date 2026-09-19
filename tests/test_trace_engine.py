@@ -12,6 +12,8 @@ from src.aca_graph.trace import (
     TraceRequest,
     TraceStep,
     TraceValidationError,
+    TraceRule,
+    TraceRuleRegistry,
 )
 
 
@@ -118,6 +120,74 @@ class TraceEngineTests(unittest.TestCase):
         result = TraceEngine(graph).trace(TraceRequest(b.id, target_id=a.id, direction="INCOMING", max_depth=1))
         self.assertEqual(result.status, "CONTRADICTED")
 
+
+    def test_ambiguous_trace_aggregates_candidate_boundaries(self):
+        graph, a, b, c = self.graph()
+        from dataclasses import replace
+        edge = next(iter(graph.outgoing(a.id)))
+        graph.evidence["E_BOUNDARY"] = {
+            "boundary_type": "reflection",
+            "reason": "Reflection prevents deterministic resolution.",
+        }
+        graph.edges[edge.id] = replace(edge, evidence_refs=("E_BOUNDARY",))
+        d = Node.create("File", "REPO", "file:d", analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_node(d)
+        graph.add_edge(Edge.create(a, "CONTAINS", d, evidence_refs=("E1",),
+                                   analysis_run_id=self.RUN, revision=self.REV))
+        graph.add_edge(Edge.create(d, "CONTAINS", c, evidence_refs=("E1",),
+                                   analysis_run_id=self.RUN, revision=self.REV))
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=c.id, max_depth=3))
+        self.assertEqual(result.status, "AMBIGUOUS")
+        self.assertIn("REFLECTION", {b.boundary_type for b in result.boundaries})
+        self.assertTrue(any(b.boundary_type == "REFLECTION" for b in result.alternatives[0].boundaries))
+
+    def test_contradicted_trace_aggregates_candidate_boundaries(self):
+        graph, a, b, _ = self.graph()
+        edge = next(iter(graph.outgoing(a.id)))
+        from dataclasses import replace
+        graph.evidence["E_BOUNDARY"] = {
+            "boundary_type": "reflection",
+            "reason": "Reflection prevents deterministic resolution.",
+        }
+        graph.edges[edge.id] = replace(edge, evidence_refs=("E_BOUNDARY",))
+        conflicting = Edge.create(a, "DEPENDS_ON", b, evidence_refs=("E_CONTRADICTION",),
+                                  analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_edge(conflicting)
+        graph.evidence["E_CONTRADICTION"] = {
+            "type": "contradiction",
+            "edge_ids": [edge.id, conflicting.id],
+            "affected_step": 1,
+            "resolution_state": "UNRESOLVED",
+        }
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
+        self.assertEqual(result.status, "CONTRADICTED")
+        self.assertIn("REFLECTION", {b.boundary_type for b in result.boundaries})
+        self.assertIn("UNRESOLVED_PATH", {b.boundary_type for b in result.boundaries})
+
+    def test_serialized_edge_identity_is_validated(self):
+        graph, a, _, c = self.graph()
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=c.id, max_depth=2))
+        data = result.to_dict()
+        data["steps"][0]["edge_id"] = "EDGE-TAMPERED"
+        with self.assertRaises(TraceValidationError):
+            Trace.from_dict(data, graph=graph)
+
+    def test_injected_rule_registry_is_used(self):
+        graph, a, b, _ = self.graph()
+
+        class CustomRule(TraceRule):
+            name = "custom-rule"
+            version = "custom-1"
+            def classify(self, edge):
+                return "INFERRED", "inferred", 0.7
+
+        registry = TraceRuleRegistry((CustomRule(),))
+        result = TraceEngine(graph, rule_registry=registry).trace(
+            TraceRequest(a.id, target_id=b.id, max_depth=1)
+        )
+        self.assertEqual(result.status, "INFERRED")
+        self.assertEqual(result.confidence, 0.7)
+        self.assertEqual(result.methodology_version, "custom-rule:custom-1")
 
     def test_boundary_round_trip_preserves_nested_metadata(self):
         graph, a, b, _ = self.graph()
