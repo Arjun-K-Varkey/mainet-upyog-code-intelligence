@@ -83,7 +83,7 @@ def build_from_ingestion(result: Any) -> Graph:
             root for root in module_roots
             if root == "." or record.path == root or record.path.startswith(root + "/")
         ]
-        module_root = max(matching, key=lambda root: (root == ".", len(root))) if matching else None
+        module_root = max(matching, key=lambda root: (root != ".", len(root), root)) if matching else None
         parent_node = module_nodes.get(module_root, repo_node)
 
         graph.add_edge(Edge.create(
