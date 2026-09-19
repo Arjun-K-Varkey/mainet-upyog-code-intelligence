@@ -62,6 +62,7 @@ class TraceStep:
     confidence: float | None
     evidence_refs: tuple[str, ...] = ()
     rationale: str | None = None
+    boundaries: tuple[TraceBoundary, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,7 +83,8 @@ class CandidatePath:
 
     def to_dict(self) -> dict[str, Any]:
         return {"steps": [s.to_dict() for s in self.steps], "status": self.status,
-                "confidence": self.confidence, "rationale": self.rationale}
+                "confidence": self.confidence, "rationale": self.rationale,
+                "boundaries": [b.to_dict() for b in self.boundaries]}
 
 
 @dataclass(frozen=True)
@@ -523,7 +525,7 @@ class TraceEngine:
                 status, steps, alternatives, confidence = candidate.status, candidate.steps, (), candidate.confidence
                 boundaries = ()
                 if status == "UNKNOWN":
-                    boundaries = (TraceBoundary(
+                    boundaries = candidate.boundaries or (TraceBoundary(
                         boundary_type="MISSING_EVIDENCE", at_step=next(
                             (step.sequence for step in candidate.steps if not step.evidence_refs), None
                         ),
@@ -618,12 +620,14 @@ class TraceEngine:
         confidences = []
         missing_evidence = False
         boundary_found = False
+        boundaries = []
         for sequence, (edge, orientation) in enumerate(edges, 1):
             status, provenance, confidence = self.rule.classify(edge)
             evidence = self.evidence_resolver.resolve(tuple(sorted(edge.evidence_refs)))
             boundary = self.boundary_classifier.classify_edge(edge, self.graph, sequence)
             if boundary is not None:
                 boundary_found = True
+                boundaries.append(boundary)
                 status, provenance, confidence = "UNKNOWN", "deterministic", None
             if not evidence:
                 missing_evidence = True
@@ -654,7 +658,9 @@ class TraceEngine:
         status = "INFERRED" if confidences else "CONFIRMED"
         confidence = min(confidences) if confidences else None
         return CandidatePath(steps=tuple(steps), status=status, confidence=confidence,
-                             rationale=None if status == "CONFIRMED" else "At least one hop is inferred.")
+                             rationale=None if status == "CONFIRMED" else "At least one hop is inferred.",
+            boundaries=tuple(boundaries),
+)
 
     @staticmethod
     def _step_id(sequence: int, source_node: str, edge: Edge, orientation: str = "OUTGOING") -> str:
