@@ -105,7 +105,7 @@ def build_from_ingestion(result: Any) -> Graph:
             pkg_node = Node.create(
                 "Package", repo_id, f"package:{package}",
                 properties={"name": package},
-                evidence_refs=(), analysis_run_id=run_id, revision=revision,
+                evidence_refs=_evidence(record), analysis_run_id=run_id, revision=revision,
             )
             graph.add_node(pkg_node)
             graph.add_edge(Edge.create(
