@@ -122,6 +122,23 @@ class CodeGraphTests(unittest.TestCase):
                                    confidence=0.8, analysis_run_id=self.RUN))
         self.assertTrue(any(e["code"] == "INFERRED_MISSING_EVIDENCE" for e in graph.validate()))
 
+    def test_nested_module_files_prefer_nested_module(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "module-a/src").mkdir(parents=True)
+            (root / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+            (root / "module-a/pom.xml").write_text("<project/>\n", encoding="utf-8")
+            (root / "App.java").write_text("class RootApp {}\n", encoding="utf-8")
+            (root / "module-a/src/App.java").write_text("package com.example;\nclass NestedApp {}\n", encoding="utf-8")
+            graph = build_from_ingestion(RepositoryScanner().scan(root))
+            nested = next(n for n in graph.nodes.values() if n.type == "Module" and n.properties["root"] == "module-a")
+            nested_file = next(n for n in graph.nodes.values() if n.type == "File" and n.properties["path"] == "module-a/src/App.java")
+            root_module = next(n for n in graph.nodes.values() if n.type == "Module" and n.properties["root"] == ".")
+            root_file = next(n for n in graph.nodes.values() if n.type == "File" and n.properties["path"] == "App.java")
+            self.assertTrue(any(e.target == nested_file.id for e in graph.outgoing(nested.id, "CONTAINS")))
+            self.assertFalse(any(e.target == nested_file.id for e in graph.outgoing(root_module.id, "CONTAINS")))
+            self.assertTrue(any(e.target == root_file.id for e in graph.outgoing(root_module.id, "CONTAINS")))
+
     def test_root_module_contains_root_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
