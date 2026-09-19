@@ -31,7 +31,7 @@ def build_from_ingestion(result: Any) -> Graph:
     revision = repository.get("revision")
     run_id = next(
         (e.run_id for e in result.evidence if getattr(e, "run_id", None)),
-        None,
+        repository.get("analysis_run_id"),
     )
     if not run_id:
         raise ValueError("SPEC-001 result is missing analysis run identity")
@@ -42,7 +42,7 @@ def build_from_ingestion(result: Any) -> Graph:
 
     repo_node = Node.create(
         "Repository", repo_id, f"repository:{repo_id}",
-        properties={"source_path": repository.get("source_path"), "vcs": repository.get("vcs")},
+        properties={"vcs": repository.get("vcs")},
         analysis_run_id=run_id, revision=revision,
     )
     graph.add_node(repo_node)
