@@ -112,6 +112,29 @@ class CodeGraphTests(unittest.TestCase):
                             analysis_run_id=self.RUN))
         self.assertTrue(any(e["code"] == "INFERRED_MISSING_CONFIDENCE" for e in graph.validate()))
 
+    def test_inferred_edge_without_evidence_is_invalid(self):
+        graph = Graph({"id": "REPO"}, None, self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN)
+        b = Node.create("Module", "REPO", "module:b", analysis_run_id=self.RUN)
+        graph.add_node(a)
+        graph.add_node(b)
+        graph.add_edge(Edge.create(a, "DEPENDS_ON", b, provenance="inferred",
+                                   confidence=0.8, analysis_run_id=self.RUN))
+        self.assertTrue(any(e["code"] == "INFERRED_MISSING_EVIDENCE" for e in graph.validate()))
+
+    def test_root_module_contains_root_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+            (root / "App.java").write_text("package com.example;\nclass App {}\n", encoding="utf-8")
+            result = RepositoryScanner().scan(root)
+            graph = build_from_ingestion(result)
+            root_module = next(n for n in graph.nodes.values()
+                               if n.type == "Module" and n.properties["root"] == ".")
+            file_node = next(n for n in graph.nodes.values()
+                             if n.type == "File" and n.properties["path"] == "App.java")
+            self.assertTrue(any(e.target == file_node.id for e in graph.outgoing(root_module.id, "CONTAINS")))
+
     def test_read_only_ingestion_to_graph(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture(Path(tmp))
