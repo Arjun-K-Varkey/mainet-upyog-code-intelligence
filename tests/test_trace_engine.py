@@ -97,12 +97,20 @@ class TraceEngineTests(unittest.TestCase):
     def test_incoming_contradiction_matches_canonical_edge(self):
         graph, a, b, _ = self.graph()
         edge = next(iter(graph.outgoing(a.id)))
+        from aca_graph.model import Edge
+        conflicting = Edge.create(
+            a, "DEPENDS_ON", b, evidence_refs=("E_CONTRADICTION",),
+            analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_edge(conflicting)
         graph.evidence["E_CONTRADICTION"] = {
             "type": "contradiction",
-            "edge_ids": [edge.id],
+            "edge_ids": [edge.id, conflicting.id],
             "claims": [{
                 "source_node": edge.source, "relation": edge.relation,
                 "target_node": edge.target, "evidence_refs": ["E_CONTRADICTION"],
+            }, {
+                "source_node": conflicting.source, "relation": conflicting.relation,
+                "target_node": conflicting.target, "evidence_refs": ["E_CONTRADICTION"],
             }],
             "affected_step": 1, "resolution_state": "UNRESOLVED",
             "evidence_refs": ["E_CONTRADICTION"],
