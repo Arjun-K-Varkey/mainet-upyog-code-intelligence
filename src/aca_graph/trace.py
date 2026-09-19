@@ -1,17 +1,24 @@
-"""Deterministic, evidence-backed tracing over the ACA CodeGraph."""
+"""ACA-TRACE-001 canonical deterministic, evidence-backed trace model."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
-from typing import Iterable
+from typing import Any, Iterable
 
-from .model import Edge, Graph, GraphValidationError, Node
+from .model import Edge, Graph
 
 TRACE_SCHEMA_VERSION = "aca-trace-0.1"
-TRACE_STATES = {"CONFIRMED", "INFERRED", "AMBIGUOUS", "CONTRADICTED", "UNKNOWN"}
-DIRECTIONS = {"OUTGOING", "INCOMING", "BOTH"}
+METHODOLOGY_VERSION = "aca-trace-method-0.1"
+ANALYZER_VERSION = "aca-trace-analyzer-0.1"
+TRACE_STATES = frozenset({"CONFIRMED", "INFERRED", "AMBIGUOUS", "CONTRADICTED", "UNKNOWN"})
+PROVENANCE = frozenset({"deterministic", "inferred"})
+DIRECTIONS = frozenset({"OUTGOING", "INCOMING", "BOTH"})
+
+
+class TraceValidationError(ValueError):
+    """Raised when a canonical trace violates ACA-TRACE-001."""
 
 
 @dataclass(frozen=True)
@@ -30,184 +37,368 @@ class TraceRequest:
             raise ValueError("source_id is required")
         if self.direction not in DIRECTIONS:
             raise ValueError(f"invalid direction: {self.direction}")
-        if self.max_depth < 0:
-            raise ValueError("max_depth must be >= 0")
-        if self.max_paths <= 0:
+        if self.max_depth < 1:
+            raise ValueError("max_depth must be >= 1")
+        if self.max_paths < 1:
             raise ValueError("max_paths must be > 0")
-        if self.allowed_relations and self.excluded_relations:
-            overlap = set(self.allowed_relations) & set(self.excluded_relations)
-            if overlap:
-                raise ValueError(f"relationship both allowed and excluded: {sorted(overlap)}")
+        if set(self.allowed_relations) & set(self.excluded_relations):
+            raise ValueError("relationship cannot be both allowed and excluded")
 
 
 @dataclass(frozen=True)
-class TracePath:
-    node_ids: tuple[str, ...]
-    edge_ids: tuple[str, ...]
-    state: str
+class TraceStep:
+    step_id: str
+    sequence: int
+    source_node: str
+    relation: str
+    target_node: str | None
+    status: str
+    provenance: str
     confidence: float | None
-    evidence_refs: tuple[str, ...]
-    provenance: tuple[str, ...]
+    evidence_refs: tuple[str, ...] = ()
+    rationale: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "node_ids": list(self.node_ids),
-            "edge_ids": list(self.edge_ids),
-            "state": self.state,
+            "step_id": self.step_id,
+            "sequence": self.sequence,
+            "source_node": self.source_node,
+            "relation": self.relation,
+            "target_node": self.target_node,
+            "status": self.status,
+            "provenance": self.provenance,
             "confidence": self.confidence,
             "evidence_refs": list(self.evidence_refs),
-            "provenance": list(self.provenance),
+            "rationale": self.rationale,
         }
 
 
 @dataclass(frozen=True)
-class TraceResult:
+class CandidatePath:
+    steps: tuple[TraceStep, ...]
+    status: str
+    confidence: float | None
+    rationale: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steps": [step.to_dict() for step in self.steps],
+            "status": self.status,
+            "confidence": self.confidence,
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class TraceBoundary:
+    boundary_type: str
+    at_step: int | None
+    status: str
+    reason: str
+    evidence_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "boundary_type": self.boundary_type,
+            "at_step": self.at_step,
+            "status": self.status,
+            "reason": self.reason,
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+@dataclass(frozen=True)
+class Trace:
     trace_id: str
-    request: TraceRequest
     repository_id: str
     revision: str | None
     analysis_run_id: str
-    paths: tuple[TracePath, ...]
-    state: str
-    evidence_refs: tuple[str, ...]
-    provenance: tuple[str, ...]
+    origin: str
+    target: str | None
+    status: str
     confidence: float | None
-    reason: str | None = None
+    methodology_version: str
+    analyzer_version: str
+    steps: tuple[TraceStep, ...] = ()
+    alternatives: tuple[CandidatePath, ...] = ()
+    evidence: tuple[str, ...] = ()
+    boundaries: tuple[TraceBoundary, ...] = ()
+    contradictions: tuple[dict[str, Any], ...] = ()
 
-    def to_dict(self) -> dict:
-        request = {
-            "source_id": self.request.source_id,
-            "target_id": self.request.target_id,
-            "direction": self.request.direction,
-            "max_depth": self.request.max_depth,
-            "allowed_relations": list(self.request.allowed_relations),
-            "excluded_relations": list(self.request.excluded_relations),
-            "allowed_node_types": list(self.request.allowed_node_types),
-            "max_paths": self.request.max_paths,
+    def validate(self, graph: Graph | None = None) -> list[dict[str, Any]]:
+        errors: list[dict[str, Any]] = []
+        def add(code: str, message: str) -> None:
+            errors.append({"code": code, "message": message})
+
+        if self.status not in TRACE_STATES:
+            add("INVALID_STATUS", f"unsupported trace status: {self.status}")
+        if self.confidence is not None and not 0 <= self.confidence <= 1:
+            add("TRACE_CONFIDENCE_OUT_OF_RANGE", "trace confidence must be between 0 and 1")
+        if not self.origin:
+            add("MISSING_ORIGIN", "origin is required")
+        if not self.methodology_version or not self.analyzer_version:
+            add("MISSING_VERSION", "methodology_version and analyzer_version are required")
+
+        step_ids = [step.step_id for step in self.steps]
+        if len(step_ids) != len(set(step_ids)):
+            add("DUPLICATE_STEP_ID", "step IDs must be unique")
+        sequences = [step.sequence for step in self.steps]
+        if sequences != list(range(1, len(sequences) + 1)):
+            add("NON_CONTIGUOUS_SEQUENCE", "step sequence must start at 1 and be contiguous")
+
+        evidence_set = set(self.evidence)
+        for step in self.steps:
+            if step.status not in TRACE_STATES:
+                add("INVALID_STEP_STATUS", f"invalid step status: {step.status}")
+            if step.provenance not in PROVENANCE:
+                add("INVALID_PROVENANCE", f"invalid provenance: {step.provenance}")
+            if step.confidence is not None and not 0 <= step.confidence <= 1:
+                add("STEP_CONFIDENCE_OUT_OF_RANGE", f"step {step.step_id} confidence out of range")
+            if step.provenance == "inferred" and step.confidence is None:
+                add("INFERRED_MISSING_CONFIDENCE", f"step {step.step_id} requires confidence")
+            if step.provenance == "deterministic" and step.confidence is not None:
+                add("DETERMINISTIC_UNSUPPORTED_CONFIDENCE", f"step {step.step_id} must not carry confidence")
+            if step.status in {"INFERRED", "AMBIGUOUS", "CONTRADICTED"} and not step.rationale:
+                add("MISSING_STEP_RATIONALE", f"step {step.step_id} requires rationale")
+            if not set(step.evidence_refs).issubset(evidence_set):
+                add("UNRESOLVED_STEP_EVIDENCE", f"step {step.step_id} references evidence not in trace evidence")
+            if graph is not None:
+                source = graph.find_node(step.source_node)
+                if source is None:
+                    add("MISSING_SOURCE_NODE", f"step {step.step_id} source node does not exist")
+                if step.target_node is not None and graph.find_node(step.target_node) is None:
+                    add("MISSING_TARGET_NODE", f"step {step.step_id} target node does not exist")
+
+        if self.status == "INFERRED" and self.confidence is None:
+            add("INFERRED_MISSING_CONFIDENCE", "inferred trace requires confidence")
+        if self.status == "CONTRADICTED" and not self.contradictions:
+            add("CONTRADICTION_MISSING_EVIDENCE", "contradicted trace requires contradiction evidence")
+        if self.status == "AMBIGUOUS" and not self.alternatives:
+            add("AMBIGUITY_MISSING_ALTERNATIVES", "ambiguous trace requires alternatives")
+        if self.status in {"AMBIGUOUS", "CONTRADICTED", "UNKNOWN"} and not self.boundaries and not self.alternatives and not self.contradictions:
+            add("MISSING_UNRESOLVED_CONTEXT", f"{self.status} trace requires alternatives, boundaries, or contradictions")
+
+        expected = self.compute_id(
+            repository_id=self.repository_id,
+            revision=self.revision,
+            origin=self.origin,
+            target=self.target,
+            methodology_version=self.methodology_version,
+            analyzer_version=self.analyzer_version,
+        )
+        if self.trace_id != expected:
+            add("TRACE_ID_MISMATCH", "trace_id does not match canonical identity")
+
+        return errors
+
+    def require_valid(self, graph: Graph | None = None) -> None:
+        errors = self.validate(graph)
+        if errors:
+            raise TraceValidationError(json.dumps(errors, sort_keys=True))
+
+    @staticmethod
+    def compute_id(*, repository_id: str, revision: str | None, origin: str,
+                   target: str | None, methodology_version: str,
+                   analyzer_version: str) -> str:
+        payload = {
+            "schema": TRACE_SCHEMA_VERSION,
+            "repository_id": repository_id,
+            "revision": revision,
+            "origin": origin,
+            "target": target,
+            "methodology_version": methodology_version,
+            "analyzer_version": analyzer_version,
         }
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return f"TRACE-{digest[:20]}"
+
+    def to_dict(self) -> dict[str, Any]:
+        self.require_valid()
         return {
             "schema_version": TRACE_SCHEMA_VERSION,
             "trace_id": self.trace_id,
             "repository_id": self.repository_id,
             "revision": self.revision,
             "analysis_run_id": self.analysis_run_id,
-            "request": request,
-            "source": self.request.source_id,
-            "target": self.request.target_id,
-            "paths": [p.to_dict() for p in self.paths],
-            "state": self.state,
-            "evidence_refs": list(self.evidence_refs),
-            "provenance": list(self.provenance),
+            "origin": self.origin,
+            "target": self.target,
+            "status": self.status,
             "confidence": self.confidence,
-            "reason": self.reason,
+            "methodology_version": self.methodology_version,
+            "analyzer_version": self.analyzer_version,
+            "steps": [step.to_dict() for step in self.steps],
+            "alternatives": [candidate.to_dict() for candidate in self.alternatives],
+            "evidence": list(self.evidence),
+            "boundaries": [boundary.to_dict() for boundary in self.boundaries],
+            "contradictions": list(self.contradictions),
         }
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
-
-class TraceValidationError(ValueError):
-    pass
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Trace":
+        if raw.get("schema_version") != TRACE_SCHEMA_VERSION:
+            raise TraceValidationError("UNSUPPORTED_TRACE_SCHEMA")
+        trace = cls(
+            trace_id=raw["trace_id"],
+            repository_id=raw["repository_id"],
+            revision=raw.get("revision"),
+            analysis_run_id=raw["analysis_run_id"],
+            origin=raw["origin"],
+            target=raw.get("target"),
+            status=raw["status"],
+            confidence=raw.get("confidence"),
+            methodology_version=raw["methodology_version"],
+            analyzer_version=raw["analyzer_version"],
+            steps=tuple(
+                TraceStep(
+                    step_id=s["step_id"], sequence=s["sequence"], source_node=s["source_node"],
+                    relation=s["relation"], target_node=s.get("target_node"),
+                    status=s["status"], provenance=s["provenance"],
+                    confidence=s.get("confidence"), evidence_refs=tuple(s.get("evidence_refs", [])),
+                    rationale=s.get("rationale"),
+                ) for s in raw.get("steps", [])
+            ),
+            alternatives=tuple(
+                CandidatePath(
+                    steps=tuple(
+                        TraceStep(
+                            step_id=s["step_id"], sequence=s["sequence"], source_node=s["source_node"],
+                            relation=s["relation"], target_node=s.get("target_node"),
+                            status=s["status"], provenance=s["provenance"],
+                            confidence=s.get("confidence"), evidence_refs=tuple(s.get("evidence_refs", [])),
+                            rationale=s.get("rationale"),
+                        ) for s in candidate.get("steps", [])
+                    ),
+                    status=candidate["status"],
+                    confidence=candidate.get("confidence"),
+                    rationale=candidate.get("rationale"),
+                ) for candidate in raw.get("alternatives", [])
+            ),
+            evidence=tuple(raw.get("evidence", [])),
+            boundaries=tuple(
+                TraceBoundary(
+                    boundary_type=b["boundary_type"], at_step=b.get("at_step"),
+                    status=b["status"], reason=b["reason"],
+                    evidence_refs=tuple(b.get("evidence_refs", [])),
+                ) for b in raw.get("boundaries", [])
+            ),
+            contradictions=tuple(raw.get("contradictions", [])),
+        )
+        trace.require_valid()
+        return trace
 
 
 class TraceEngine:
-    """Read-only deterministic traversal over a validated CodeGraph."""
+    """Read-only deterministic candidate-path engine and canonical Trace builder."""
 
     def __init__(self, graph: Graph):
         graph.require_valid()
         self.graph = graph
 
-    def trace(
-        self,
-        request: TraceRequest,
-    ) -> TraceResult:
+    def trace(self, request: TraceRequest) -> Trace:
         self._validate_request(request)
-        paths = self._enumerate_paths(request)
-        trace_paths = tuple(self._make_path(path_nodes, path_edges) for path_nodes, path_edges in paths)
-
-        if not trace_paths:
-            state = "UNKNOWN"
-            reason = "NO_PATH"
-            confidence = None
-        elif len(trace_paths) > 1:
-            state = "AMBIGUOUS"
-            reason = "MULTIPLE_CANDIDATE_PATHS"
-            confidence = self._aggregate_confidence(trace_paths)
-        elif trace_paths[0].state == "INFERRED":
-            state = "INFERRED"
-            reason = None
-            confidence = trace_paths[0].confidence
+        raw_paths = self._enumerate_paths(request)
+        candidates = tuple(self._candidate_path(nodes, edges) for nodes, edges in raw_paths)
+        if candidates:
+            if len(candidates) > 1:
+                status = "AMBIGUOUS"
+                rationale = "Multiple materially distinct candidate paths remain unresolved."
+                alternatives = candidates
+            else:
+                candidate = candidates[0]
+                status = candidate.status
+                rationale = candidate.rationale
+                alternatives = ()
+            steps = candidates[0].steps if len(candidates) == 1 else ()
+            confidence = candidates[0].confidence if len(candidates) == 1 else None
+            boundaries = ()
         else:
-            state = "CONFIRMED"
-            reason = None
+            status = "UNKNOWN"
+            rationale = "No supported path was established from available graph evidence."
+            steps = ()
+            alternatives = ()
             confidence = None
+            boundaries = (TraceBoundary(
+                boundary_type="UNRESOLVED_PATH",
+                at_step=None,
+                status="UNKNOWN",
+                reason=rationale,
+            ),)
 
-        evidence = tuple(sorted({ref for path in trace_paths for ref in path.evidence_refs}))
-        provenance = tuple(sorted({value for path in trace_paths for value in path.provenance}))
-        trace_id = self._trace_id(request)
-
-        return TraceResult(
+        evidence = tuple(sorted({
+            ref for candidate in candidates for step in candidate.steps for ref in step.evidence_refs
+        }))
+        trace_id = Trace.compute_id(
+            repository_id=self.graph.repository["id"],
+            revision=self.graph.revision,
+            origin=request.source_id,
+            target=request.target_id,
+            methodology_version=METHODOLOGY_VERSION,
+            analyzer_version=ANALYZER_VERSION,
+        )
+        result = Trace(
             trace_id=trace_id,
-            request=request,
             repository_id=self.graph.repository["id"],
             revision=self.graph.revision,
             analysis_run_id=self.graph.analysis_run_id,
-            paths=trace_paths,
-            state=state,
-            evidence_refs=evidence,
-            provenance=provenance,
+            origin=request.source_id,
+            target=request.target_id,
+            status=status,
             confidence=confidence,
-            reason=reason,
+            methodology_version=METHODOLOGY_VERSION,
+            analyzer_version=ANALYZER_VERSION,
+            steps=steps,
+            alternatives=alternatives,
+            evidence=evidence,
+            boundaries=boundaries,
         )
+        result.require_valid(self.graph)
+        return result
 
     def _validate_request(self, request: TraceRequest) -> None:
         source = self.graph.find_node(request.source_id)
         if source is None:
-            raise TraceValidationError("source node does not exist")
-        if request.target_id is not None and self.graph.find_node(request.target_id) is None:
-            raise TraceValidationError("target node does not exist")
-        if request.allowed_relations:
-            invalid = set(request.allowed_relations) - set(self.graph.edges[e].relation for e in self.graph.edges)
-            if invalid:
-                raise TraceValidationError(f"unsupported relationship types: {sorted(invalid)}")
-        if request.excluded_relations:
-            invalid = set(request.excluded_relations) - set(self.graph.edges[e].relation for e in self.graph.edges)
-            if invalid:
-                raise TraceValidationError(f"unsupported relationship types: {sorted(invalid)}")
-        if request.allowed_node_types:
-            unknown = set(request.allowed_node_types) - {
-                node.type for node in self.graph.nodes.values()
-            }
-            if unknown:
-                raise TraceValidationError(f"unsupported node types: {sorted(unknown)}")
+            raise TraceValidationError("MISSING_SOURCE_NODE")
         if source.repository_id != self.graph.repository["id"] or source.revision != self.graph.revision:
-            raise TraceValidationError("source node is outside graph context")
-        if request.target_id:
+            raise TraceValidationError("SOURCE_CONTEXT_MISMATCH")
+        if request.target_id is not None:
             target = self.graph.find_node(request.target_id)
-            assert target is not None
+            if target is None:
+                raise TraceValidationError("MISSING_TARGET_NODE")
             if target.repository_id != self.graph.repository["id"] or target.revision != self.graph.revision:
-                raise TraceValidationError("target node is outside graph context")
+                raise TraceValidationError("TARGET_CONTEXT_MISMATCH")
+        if request.allowed_relations:
+            known = {edge.relation for edge in self.graph.edges.values()}
+            unknown = set(request.allowed_relations) - known
+            if unknown:
+                raise TraceValidationError(f"UNSUPPORTED_RELATION:{sorted(unknown)}")
+        if request.allowed_node_types:
+            known = {node.type for node in self.graph.nodes.values()}
+            unknown = set(request.allowed_node_types) - known
+            if unknown:
+                raise TraceValidationError(f"UNSUPPORTED_NODE_TYPE:{sorted(unknown)}")
 
     def _edges_from(self, node_id: str, direction: str) -> list[tuple[Edge, str]]:
-        result: list[tuple[Edge, str]] = []
+        edges: list[tuple[Edge, str]] = []
         if direction in {"OUTGOING", "BOTH"}:
-            result.extend((edge, edge.target) for edge in self.graph.outgoing(node_id))
+            edges.extend((edge, edge.target) for edge in self.graph.outgoing(node_id))
         if direction in {"INCOMING", "BOTH"}:
-            result.extend((edge, edge.source) for edge in self.graph.incoming(node_id))
-        return sorted(result, key=lambda item: (item[0].id, item[1]))
+            edges.extend((edge, edge.source) for edge in self.graph.incoming(node_id))
+        return sorted(edges, key=lambda item: (item[0].id, item[1]))
 
     def _edge_allowed(self, edge: Edge, request: TraceRequest) -> bool:
         if request.allowed_relations and edge.relation not in request.allowed_relations:
             return False
         if edge.relation in request.excluded_relations:
             return False
-        target = self.graph.find_node(edge.target)
         source = self.graph.find_node(edge.source)
-        if target is None or source is None:
+        target = self.graph.find_node(edge.target)
+        if source is None or target is None:
             return False
         if request.allowed_node_types and (
-            target.type not in request.allowed_node_types
-            or source.type not in request.allowed_node_types
+            source.type not in request.allowed_node_types or target.type not in request.allowed_node_types
         ):
             return False
         return True
@@ -215,7 +406,6 @@ class TraceEngine:
     def _enumerate_paths(self, request: TraceRequest) -> list[tuple[tuple[str, ...], tuple[Edge, ...]]]:
         queue: list[tuple[tuple[str, ...], tuple[Edge, ...]]] = [((request.source_id,), ())]
         results: list[tuple[tuple[str, ...], tuple[Edge, ...]]] = []
-
         while queue and len(results) < request.max_paths:
             node_ids, edges = queue.pop(0)
             current = node_ids[-1]
@@ -226,104 +416,57 @@ class TraceEngine:
                 results.append((node_ids, edges))
             if len(edges) >= request.max_depth:
                 continue
-
             for edge, next_node in self._edges_from(current, request.direction):
-                if not self._edge_allowed(edge, request):
-                    continue
-                if next_node in node_ids:
+                if not self._edge_allowed(edge, request) or next_node in node_ids:
                     continue
                 queue.append((node_ids + (next_node,), edges + (edge,)))
-
         return results
 
-    def _make_path(self, node_ids: tuple[str, ...], edges: tuple[Edge, ...]) -> TracePath:
-        inferred = [edge for edge in edges if edge.provenance == "inferred"]
-        state = "INFERRED" if inferred else "CONFIRMED"
-        confidence = min(edge.confidence for edge in inferred) if inferred else None
-        evidence = tuple(sorted({ref for edge in edges for ref in edge.evidence_refs}))
-        provenance = tuple(sorted({edge.provenance for edge in edges}))
-        return TracePath(node_ids, tuple(edge.id for edge in edges), state, confidence, evidence, provenance)
+    def _candidate_path(self, node_ids: tuple[str, ...], edges: tuple[Edge, ...]) -> CandidatePath:
+        steps: list[TraceStep] = []
+        inferred_confidences: list[float] = []
+        for sequence, edge in enumerate(edges, 1):
+            provenance = edge.provenance
+            status = "INFERRED" if provenance == "inferred" else "CONFIRMED"
+            confidence = edge.confidence if provenance == "inferred" else None
+            if confidence is not None:
+                inferred_confidences.append(confidence)
+            evidence = tuple(sorted(edge.evidence_refs))
+            step_id = self._step_id(sequence, node_ids[sequence - 1], edge)
+            steps.append(TraceStep(
+                step_id=step_id,
+                sequence=sequence,
+                source_node=node_ids[sequence - 1],
+                relation=edge.relation,
+                target_node=node_ids[sequence],
+                status=status,
+                provenance=provenance,
+                confidence=confidence,
+                evidence_refs=evidence,
+                rationale="Derived directly from canonical CodeGraph edge."
+                if status == "CONFIRMED" else "Derived from an inferred CodeGraph edge.",
+            ))
+        status = "INFERRED" if inferred_confidences else "CONFIRMED"
+        confidence = min(inferred_confidences) if inferred_confidences else None
+        return CandidatePath(
+            steps=tuple(steps),
+            status=status,
+            confidence=confidence,
+            rationale=None if status == "CONFIRMED" else "At least one hop is inferred.",
+        )
 
     @staticmethod
-    def _aggregate_confidence(paths: Iterable[TracePath]) -> float | None:
-        values = [path.confidence for path in paths if path.confidence is not None]
-        return min(values) if values else None
-
-    def _trace_id(self, request: TraceRequest) -> str:
-        payload = {
-            "schema": TRACE_SCHEMA_VERSION,
-            "repository": self.graph.repository["id"],
-            "revision": self.graph.revision,
-            "source": request.source_id,
-            "target": request.target_id,
-            "direction": request.direction,
-            "max_depth": request.max_depth,
-            "allowed_relations": sorted(request.allowed_relations),
-            "excluded_relations": sorted(request.excluded_relations),
-            "allowed_node_types": sorted(request.allowed_node_types),
-            "max_paths": request.max_paths,
-        }
+    def _step_id(sequence: int, source_node: str, edge: Edge) -> str:
+        payload = {"schema": TRACE_SCHEMA_VERSION, "sequence": sequence,
+                   "source": source_node, "relation": edge.relation, "target": edge.target}
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return f"TRACE-{digest[:20]}"
+        return f"STEP-{digest[:20]}"
 
-    @staticmethod
-    def from_json(data: str) -> TraceResult:
-        raw = json.loads(data)
-        if raw.get("schema_version") != TRACE_SCHEMA_VERSION:
-            raise TraceValidationError("unsupported trace schema version")
-        request_raw = raw["request"]
-        request = TraceRequest(
-            source_id=request_raw["source_id"],
-            target_id=request_raw.get("target_id"),
-            direction=request_raw["direction"],
-            max_depth=request_raw["max_depth"],
-            allowed_relations=tuple(request_raw.get("allowed_relations", [])),
-            excluded_relations=tuple(request_raw.get("excluded_relations", [])),
-            allowed_node_types=tuple(request_raw.get("allowed_node_types", [])),
-            max_paths=request_raw["max_paths"],
-        )
-        if raw.get("state") not in TRACE_STATES:
-            raise TraceValidationError("invalid trace state")
-        result = TraceResult(
-            trace_id=raw["trace_id"],
-            request=request,
-            repository_id=raw["repository_id"],
-            revision=raw.get("revision"),
-            analysis_run_id=raw["analysis_run_id"],
-            paths=tuple(
-                TracePath(
-                    tuple(path["node_ids"]),
-                    tuple(path["edge_ids"]),
-                    path["state"],
-                    path.get("confidence"),
-                    tuple(path.get("evidence_refs", [])),
-                    tuple(path.get("provenance", [])),
-                )
-                for path in raw.get("paths", [])
-            ),
-            state=raw["state"],
-            evidence_refs=tuple(raw.get("evidence_refs", [])),
-            provenance=tuple(raw.get("provenance", [])),
-            confidence=raw.get("confidence"),
-            reason=raw.get("reason"),
-        )
-        expected_id = hashlib.sha256(
-            json.dumps({
-                "schema": TRACE_SCHEMA_VERSION,
-                "repository": result.repository_id,
-                "revision": result.revision,
-                "source": request.source_id,
-                "target": request.target_id,
-                "direction": request.direction,
-                "max_depth": request.max_depth,
-                "allowed_relations": sorted(request.allowed_relations),
-                "excluded_relations": sorted(request.excluded_relations),
-                "allowed_node_types": sorted(request.allowed_node_types),
-                "max_paths": request.max_paths,
-            }, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()[:20]
-        if result.trace_id != f"TRACE-{expected_id}":
-            raise TraceValidationError("TRACE_ID_MISMATCH")
-        if result.state == "CONFIRMED" and any(path.state != "CONFIRMED" for path in result.paths):
-            raise TraceValidationError("CONFIRMED trace contains inferred path")
-        return result
+
+def validate_trace_dict(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate serialized canonical trace data without constructing a graph."""
+    try:
+        Trace.from_dict(raw)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return [{"code": "INVALID_TRACE", "message": str(exc)}]
+    return []
