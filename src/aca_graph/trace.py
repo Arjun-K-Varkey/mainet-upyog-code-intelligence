@@ -64,6 +64,7 @@ class TraceStep:
     rationale: str | None = None
     boundaries: tuple[TraceBoundary, ...] = ()
     edge_id: str | None = None
+    traversal_direction: str = "OUTGOING"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +74,7 @@ class TraceStep:
             "provenance": self.provenance, "confidence": self.confidence,
             "evidence_refs": list(self.evidence_refs), "rationale": self.rationale,
             "boundaries": [b.to_dict() for b in self.boundaries], "edge_id": self.edge_id,
+            "traversal_direction": self.traversal_direction,
         }
 
 
@@ -167,6 +169,8 @@ class Trace:
                         add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
                     if step.target_node is not None and graph.find_node(step.target_node) is None:
                         add("MISSING_TARGET_NODE", f"{context} step {step.step_id} target node does not exist")
+                    if step.traversal_direction not in DIRECTIONS - {"BOTH"}:
+                        add("INVALID_TRAVERSAL_DIRECTION", f"{context} step {step.step_id} has invalid traversal direction")
                     if step.edge_id is not None:
                         edge = graph.edges.get(step.edge_id)
                         if edge is None:
@@ -174,8 +178,9 @@ class Trace:
                         elif step.target_node is not None:
                             direct = edge.source == step.source_node and edge.target == step.target_node and edge.relation == step.relation
                             reversed_endpoints = edge.target == step.source_node and edge.source == step.target_node and edge.relation == step.relation
-                            if not (direct or reversed_endpoints):
-                                add("EDGE_ID_MISMATCH", f"{context} step {step.step_id} edge identity does not match endpoints/relation")
+                            expected = direct if step.traversal_direction == "OUTGOING" else reversed_endpoints
+                            if not expected:
+                                add("EDGE_ID_MISMATCH", f"{context} step {step.step_id} edge identity does not match traversal direction/endpoints/relation")
 
         if not self.repository_id:
             add("MISSING_REPOSITORY_ID", "repository_id is required")
@@ -325,6 +330,7 @@ class Trace:
                 provenance=s["provenance"], confidence=s.get("confidence"),
                 evidence_refs=tuple(s.get("evidence_refs", [])), rationale=s.get("rationale"),
                 boundaries=tuple(boundary(b) for b in s.get("boundaries", [])), edge_id=s.get("edge_id"),
+                traversal_direction=s.get("traversal_direction", "OUTGOING"),
             )
         trace = cls(
             trace_id=raw["trace_id"], repository_id=raw["repository_id"], revision=raw.get("revision"),
@@ -600,7 +606,7 @@ class TraceEngine:
             trace_id=trace_id, repository_id=self.graph.repository["id"],
             revision=self.graph.revision, analysis_run_id=self.graph.analysis_run_id,
             origin=request.source_id, target=request.target_id, status=status,
-            confidence=confidence, methodology_version=METHODOLOGY_VERSION,
+            confidence=confidence, methodology_version=self.rule_registry.version,
             analyzer_version=ANALYZER_VERSION, steps=steps, alternatives=alternatives,
             evidence=evidence, boundaries=boundaries, contradictions=contradictions,
         )
@@ -704,6 +710,7 @@ class TraceEngine:
                 evidence_refs=evidence,
                 boundaries=tuple(b for b in boundaries if b.at_step == sequence),
                 edge_id=edge.id,
+                traversal_direction=orientation,
                 rationale=("Explicit boundary evidence prevents asserting this hop."
                            if boundary is not None else
                            "Material hop lacks resolvable supporting evidence."
@@ -734,9 +741,9 @@ class TraceEngine:
         return f"STEP-{digest[:20]}"
 
 
-def validate_trace_dict(raw: dict[str, Any]) -> list[dict[str, Any]]:
+def validate_trace_dict(raw: dict[str, Any], graph: Graph | None = None) -> list[dict[str, Any]]:
     try:
-        Trace.from_dict(raw)
+        Trace.from_dict(raw, graph=graph)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return [{"code": "INVALID_TRACE", "message": str(exc)}]
     return []
