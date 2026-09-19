@@ -108,7 +108,7 @@ class TraceEngineTests(unittest.TestCase):
         self.assertEqual(result.confidence, 0.6)
         self.assertEqual(result.steps[0].confidence, 0.8)
 
-    def test_contradicted_trace_requires_contradiction_evidence(self):
+    def test_contradicted_trace_requires_structured_claims_and_resolution(self):
         trace_id = Trace.compute_id(
             repository_id="REPO", revision="REV1", origin="N1", target="N2",
             methodology_version=METHODOLOGY_VERSION, analyzer_version=ANALYZER_VERSION)
@@ -121,7 +121,56 @@ class TraceEngineTests(unittest.TestCase):
             boundaries=(TraceBoundary("UNRESOLVED_PATH", 1, "CONTRADICTED",
                                       "Conflicting claims remain.", ("E1", "E2")),),
         )
-        self.assertEqual(base.validate(), [])
+        codes = {error["code"] for error in base.validate()}
+        self.assertIn("INVALID_CONTRADICTION_CLAIM", codes)
+        self.assertIn("CONTRADICTION_MISSING_AFFECTED_STEP", codes)
+        self.assertIn("CONTRADICTION_MISSING_RESOLUTION", codes)
+
+    def test_evidence_less_edge_cannot_be_confirmed(self):
+        graph, a, b, _ = self.graph()
+        graph.edges.clear()
+        graph.evidence.clear()
+        graph.add_edge(Edge.create(
+            a, "CONTAINS", b, evidence_refs=(),
+            analysis_run_id=self.RUN, revision=self.REV))
+        graph.require_valid()
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
+        self.assertEqual(result.status, "UNKNOWN")
+        self.assertEqual(result.steps[0].status, "UNKNOWN")
+        self.assertEqual(result.steps[0].evidence_refs, ())
+        self.assertEqual(result.boundaries[0].boundary_type, "MISSING_EVIDENCE")
+
+    def test_invalid_alternative_is_rejected(self):
+        trace_id = Trace.compute_id(
+            repository_id="REPO", revision="REV1", origin="N1", target="N2",
+            methodology_version=METHODOLOGY_VERSION, analyzer_version=ANALYZER_VERSION)
+        step = TraceStep(
+            step_id="STEP-BAD", sequence=2, source_node="N1", relation="CONTAINS",
+            target_node="N2", status="NOT_A_STATUS", provenance="bad",
+            confidence=2.0, evidence_refs=("E1",))
+        trace = Trace(
+            trace_id=trace_id, repository_id="REPO", revision="REV1", analysis_run_id="RUN",
+            origin="N1", target="N2", status="AMBIGUOUS", confidence=None,
+            methodology_version=METHODOLOGY_VERSION, analyzer_version=ANALYZER_VERSION,
+            alternatives=(CandidatePath((step,), "NOT_A_STATUS", 2.0),),
+            evidence=("E1",))
+        codes = {error["code"] for error in trace.validate()}
+        self.assertIn("INVALID_ALTERNATIVE_STATUS", codes)
+        self.assertIn("INVALID_STEP_STATUS", codes)
+        self.assertIn("INVALID_PROVENANCE", codes)
+        self.assertIn("ALTERNATIVE_CONFIDENCE_OUT_OF_RANGE", codes)
+        self.assertIn("NON_CONTIGUOUS_SEQUENCE", codes)
+
+    def test_path_truncation_is_exposed(self):
+        graph, a, b, c = self.graph()
+        d = Node.create("File", "REPO", "file:d", analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_node(d)
+        graph.evidence["E2"] = {"source": "test"}
+        graph.add_edge(Edge.create(a, "CONTAINS", d, evidence_refs=("E2",),
+                                   analysis_run_id=self.RUN, revision=self.REV))
+        result = TraceEngine(graph).trace(TraceRequest(a.id, max_depth=1, max_paths=1))
+        self.assertEqual(result.status, "AMBIGUOUS")
+        self.assertTrue(any("max_paths" in b.reason for b in result.boundaries))
 
     def test_validation_rejects_malformed_steps(self):
         trace_id = Trace.compute_id(
