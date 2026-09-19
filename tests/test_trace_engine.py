@@ -78,6 +78,20 @@ class TraceEngineTests(unittest.TestCase):
         self.assertEqual(len(result.alternatives), 2)
         self.assertTrue(all(candidate.steps for candidate in result.alternatives))
 
+    def test_explicit_contradiction_evidence_is_not_confused_with_ambiguity(self):
+        graph, a, b, c = self.graph()
+        d = Node.create("File", "REPO", "file:d", analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_node(d)
+        e1 = Edge.create(a, "CONTAINS", b, evidence_refs=("E1",), analysis_run_id=self.RUN, revision=self.REV)
+        e2 = Edge.create(a, "CONTAINS", d, evidence_refs=("E1",), analysis_run_id=self.RUN, revision=self.REV)
+        graph.add_edge(e1); graph.add_edge(e2)
+        graph.evidence["E_CONTRADICTION"] = {"type": "contradiction", "edge_ids": [e1.id, e2.id], "reason": "mutually exclusive mapping"}
+        graph.require_valid()
+        result = TraceEngine(graph).trace(TraceRequest(a.id, max_depth=1))
+        self.assertEqual(result.status, "CONTRADICTED")
+        self.assertTrue(result.contradictions)
+        self.assertIn("E_CONTRADICTION", result.evidence)
+
     def test_inferred_trace_preserves_confidence(self):
         graph, a, b, c = self.graph()
         graph.edges.clear()
