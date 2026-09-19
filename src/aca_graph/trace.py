@@ -279,6 +279,9 @@ class EvidenceResolver:
 class ContradictionDetector:
     """Detects explicit conflicting graph claims without treating alternatives as contradictions."""
 
+    def __init__(self, graph: Graph):
+        self.graph = graph
+
     def detect(self, candidates: tuple[CandidatePath, ...]) -> tuple[dict[str, Any], ...]:
         claims: dict[tuple[str, str], list[TraceStep]] = {}
         for candidate in candidates:
