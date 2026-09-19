@@ -170,7 +170,7 @@ class Graph:
 
     def to_dict(self):
         self.require_valid()
-        repository={k:v for k,v in self.repository.items() if k not in {"source_path","workspace_id","scan_timestamp"}}
+        repository={k:v for k,v in self.repository.items() if k not in {"source_path","workspace_id","scan_timestamp","analysis_run_id"}}
         return {"schema_version":SCHEMA_VERSION,"repository":repository,"revision":self.revision,
                 "analysis_run_id":self.analysis_run_id,
                 "nodes":[n.to_dict() for n in sorted(self.nodes.values(),key=lambda x:x.id)],
