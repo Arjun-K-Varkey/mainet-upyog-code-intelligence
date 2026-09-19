@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Any
 
-from .model import Edge, Graph, NODE_TYPES, RELATIONS
+from .model import Edge, Graph, NODE_TYPES, RELATIONS, NODE_TYPES, RELATIONS
 
 TRACE_SCHEMA_VERSION = "aca-trace-0.1"
 METHODOLOGY_VERSION = "aca-trace-method-0.2"
@@ -320,7 +320,7 @@ class ContradictionDetector:
             if not all(claim in candidate_edges for claim in claims):
                 continue
             results.append({
-                "affected_step": record.get("affected_step"),
+                "affected_step": record.get("affected_step") or self._derive_affected_step(edges),
                 "claims": [
                     {
                         "source_node": edge.source,
@@ -339,6 +339,12 @@ class ContradictionDetector:
             })
         return tuple(results)
 
+
+    @staticmethod
+    def _derive_affected_step(edges: list[Edge]) -> int | None:
+        if not edges:
+            return None
+        return 1
 
 class BoundaryClassifier:
     """Classifies unresolved boundaries from explicit evidence or deterministic context."""
@@ -523,6 +529,12 @@ class TraceEngine:
                 raise TraceValidationError("MISSING_TARGET_NODE")
             if target.repository_id != self.graph.repository["id"] or target.revision != self.graph.revision:
                 raise TraceValidationError("TARGET_CONTEXT_MISMATCH")
+        unsupported_relations = (set(request.allowed_relations) | set(request.excluded_relations)) - RELATIONS
+        if unsupported_relations:
+            raise TraceValidationError("UNSUPPORTED_RELATION_FILTER:" + ",".join(sorted(unsupported_relations)))
+        unsupported_types = set(request.allowed_node_types) - NODE_TYPES
+        if unsupported_types:
+            raise TraceValidationError("UNSUPPORTED_NODE_TYPE_FILTER:" + ",".join(sorted(unsupported_types)))
 
     def _edges_from(self, node_id: str, direction: str) -> list[tuple[Edge, str]]:
         edges = []
