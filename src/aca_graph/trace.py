@@ -63,6 +63,7 @@ class TraceStep:
     evidence_refs: tuple[str, ...] = ()
     rationale: str | None = None
     boundaries: tuple[TraceBoundary, ...] = ()
+    edge_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,7 +72,7 @@ class TraceStep:
             "target_node": self.target_node, "status": self.status,
             "provenance": self.provenance, "confidence": self.confidence,
             "evidence_refs": list(self.evidence_refs), "rationale": self.rationale,
-            "boundaries": [b.to_dict() for b in self.boundaries],
+            "boundaries": [b.to_dict() for b in self.boundaries], "edge_id": self.edge_id,
         }
 
 
@@ -314,7 +315,7 @@ class Trace:
                 relation=s["relation"], target_node=s.get("target_node"), status=s["status"],
                 provenance=s["provenance"], confidence=s.get("confidence"),
                 evidence_refs=tuple(s.get("evidence_refs", [])), rationale=s.get("rationale"),
-                boundaries=tuple(boundary(b) for b in s.get("boundaries", [])),
+                boundaries=tuple(boundary(b) for b in s.get("boundaries", [])), edge_id=s.get("edge_id"),
             )
         trace = cls(
             trace_id=raw["trace_id"], repository_id=raw["repository_id"], revision=raw.get("revision"),
@@ -507,7 +508,8 @@ class TraceEngine:
     def __init__(self, graph: Graph):
         graph.require_valid()
         self.graph = graph
-        self.rule = TraceRule()
+        self.rule_registry = TraceRuleRegistry()
+        self.classifier = TraceClassifier()
         self.evidence_resolver = EvidenceResolver(graph)
         self.contradiction_detector = ContradictionDetector(graph)
         self.boundary_classifier = BoundaryClassifier()
@@ -657,7 +659,7 @@ class TraceEngine:
         boundary_found = False
         boundaries = []
         for sequence, (edge, orientation) in enumerate(edges, 1):
-            status, provenance, confidence = self.rule.classify(edge)
+            status, provenance, confidence = self.rule_registry.classify(edge)
             evidence = self.evidence_resolver.resolve(tuple(sorted(edge.evidence_refs)))
             boundary = self.boundary_classifier.classify_edge(edge, self.graph, sequence)
             if boundary is not None:
