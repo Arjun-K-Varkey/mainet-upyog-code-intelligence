@@ -233,9 +233,9 @@ class CodeGraphTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             cases = {
-                "Trailing.java": 'package com.trailing; // generated\\nclass A {}\\n',
-                "Block.java": '/* package fake.block; */\\npackage com.block;\\nclass B {}\\n',
-                "Literal.java": 'String s = "/* package fake.literal; */";\\npackage com.literal;\\nclass C {}\\n',
+                "Trailing.java": 'package com.trailing; // generated\nclass A {}\n',
+                "Block.java": '/* package fake.block; */\npackage com.block;\nclass B {}\n',
+                "Literal.java": 'String s = "/* package fake.literal; */";\npackage com.literal;\nclass C {}\n',
             }
             for name, content in cases.items():
                 (root / name).write_text(content, encoding="utf-8")
