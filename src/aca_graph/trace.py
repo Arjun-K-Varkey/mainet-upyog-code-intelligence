@@ -681,7 +681,8 @@ class TraceEngine:
                 relation=edge.relation, target_node=target_node,
                 status=status, provenance=provenance, confidence=confidence,
                 evidence_refs=evidence,
-                boundaries=((boundary,) if boundary is not None else ()),
+                boundaries=tuple(b for b in boundaries if b.at_step == sequence),
+                edge_id=edge.id,
                 rationale=("Explicit boundary evidence prevents asserting this hop."
                            if boundary is not None else
                            "Material hop lacks resolvable supporting evidence."
