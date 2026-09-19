@@ -71,6 +71,7 @@ class TraceStep:
             "target_node": self.target_node, "status": self.status,
             "provenance": self.provenance, "confidence": self.confidence,
             "evidence_refs": list(self.evidence_refs), "rationale": self.rationale,
+            "boundaries": [b.to_dict() for b in self.boundaries],
         }
 
 
@@ -151,6 +152,15 @@ class Trace:
                     add("MISSING_STEP_EVIDENCE", f"{context} material step {step.step_id} requires evidence")
                 if not set(step.evidence_refs).issubset(evidence_set):
                     add("UNRESOLVED_STEP_EVIDENCE", f"{context} step {step.step_id} references evidence not in trace evidence")
+                for boundary_index, boundary in enumerate(step.boundaries, 1):
+                    if boundary.boundary_type not in BOUNDARY_TYPES:
+                        add("INVALID_STEP_BOUNDARY_TYPE", f"{context} step {step.step_id} boundary {boundary_index} has invalid type")
+                    if boundary.status not in TRACE_STATES:
+                        add("INVALID_STEP_BOUNDARY_STATUS", f"{context} step {step.step_id} boundary {boundary_index} has invalid status")
+                    if not boundary.reason:
+                        add("MISSING_STEP_BOUNDARY_REASON", f"{context} step {step.step_id} boundary {boundary_index} requires reason")
+                    if not set(boundary.evidence_refs).issubset(evidence_set):
+                        add("UNRESOLVED_STEP_BOUNDARY_EVIDENCE", f"{context} step {step.step_id} boundary {boundary_index} evidence does not resolve")
                 if graph is not None:
                     if graph.find_node(step.source_node) is None:
                         add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
@@ -193,6 +203,15 @@ class Trace:
             if not alternative.steps:
                 add("EMPTY_ALTERNATIVE", f"alternative {index} must contain steps")
             validate_steps(alternative.steps, f"alternative {index}")
+            for boundary_index, boundary in enumerate(alternative.boundaries, 1):
+                if boundary.boundary_type not in BOUNDARY_TYPES:
+                    add("INVALID_ALTERNATIVE_BOUNDARY_TYPE", f"alternative {index} boundary {boundary_index} has invalid type")
+                if boundary.status not in TRACE_STATES:
+                    add("INVALID_ALTERNATIVE_BOUNDARY_STATUS", f"alternative {index} boundary {boundary_index} has invalid status")
+                if not boundary.reason:
+                    add("MISSING_ALTERNATIVE_BOUNDARY_REASON", f"alternative {index} boundary {boundary_index} requires reason")
+                if not set(boundary.evidence_refs).issubset(evidence_set):
+                    add("UNRESOLVED_ALTERNATIVE_BOUNDARY_EVIDENCE", f"alternative {index} boundary {boundary_index} evidence does not resolve")
 
         for boundary in self.boundaries:
             if boundary.boundary_type not in BOUNDARY_TYPES:
@@ -282,12 +301,21 @@ class Trace:
     def from_dict(cls, raw: dict[str, Any]) -> "Trace":
         if raw.get("schema_version") != TRACE_SCHEMA_VERSION:
             raise TraceValidationError("UNSUPPORTED_TRACE_SCHEMA")
+        def boundary(b: dict[str, Any]) -> TraceBoundary:
+            return TraceBoundary(
+                boundary_type=b["boundary_type"], at_step=b.get("at_step"),
+                status=b["status"], reason=b["reason"],
+                evidence_refs=tuple(b.get("evidence_refs", []))
+            )
+
         def step(s: dict[str, Any]) -> TraceStep:
             return TraceStep(
                 step_id=s["step_id"], sequence=s["sequence"], source_node=s["source_node"],
                 relation=s["relation"], target_node=s.get("target_node"), status=s["status"],
                 provenance=s["provenance"], confidence=s.get("confidence"),
-                evidence_refs=tuple(s.get("evidence_refs", [])), rationale=s.get("rationale"))
+                evidence_refs=tuple(s.get("evidence_refs", [])), rationale=s.get("rationale"),
+                boundaries=tuple(boundary(b) for b in s.get("boundaries", [])),
+            )
         trace = cls(
             trace_id=raw["trace_id"], repository_id=raw["repository_id"], revision=raw.get("revision"),
             analysis_run_id=raw["analysis_run_id"], origin=raw["origin"], target=raw.get("target"),
@@ -296,7 +324,8 @@ class Trace:
             steps=tuple(step(s) for s in raw.get("steps", [])),
             alternatives=tuple(CandidatePath(
                 steps=tuple(step(s) for s in c.get("steps", [])), status=c["status"],
-                confidence=c.get("confidence"), rationale=c.get("rationale"))
+                confidence=c.get("confidence"), rationale=c.get("rationale"),
+                boundaries=tuple(boundary(b) for b in c.get("boundaries", [])))
                 for c in raw.get("alternatives", [])),
             evidence=tuple(raw.get("evidence", [])),
             boundaries=tuple(TraceBoundary(
