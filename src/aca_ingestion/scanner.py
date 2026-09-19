@@ -108,15 +108,104 @@ def _structural_roots(result):
     return roots
 
 def _java_package(data: bytes) -> str | None:
+    """Extract the first Java package declaration while ignoring comments/literals."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return None
-    for line in text.splitlines():
-        stripped=line.strip()
-        if stripped.startswith("package ") and stripped.endswith(";"):
-            return stripped[len("package "):-1].strip()
-    return None
+
+    # Blank comments and literals while preserving newlines so the declaration
+    # can still be matched without treating comment markers in literals as syntax.
+    chars = list(text)
+    i = 0
+    n = len(chars)
+    state = "code"
+    while i < n:
+        ch = chars[i]
+        nxt = chars[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if ch == "/" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                i += 2
+                state = "line_comment"
+                continue
+            if ch == "/" and nxt == "*":
+                chars[i] = chars[i + 1] = " "
+                i += 2
+                state = "block_comment"
+                continue
+            if ch == '"':
+                chars[i] = " "
+                i += 1
+                state = "string"
+                continue
+            if ch == "'":
+                chars[i] = " "
+                i += 1
+                state = "char"
+                continue
+            i += 1
+            continue
+        if state == "line_comment":
+            if ch in "\n\r":
+                state = "code"
+            else:
+                chars[i] = " "
+            i += 1
+            continue
+        if state == "block_comment":
+            if ch == "*" and nxt == "/":
+                chars[i] = chars[i + 1] = " "
+                i += 2
+                state = "code"
+            else:
+                if ch not in "\n\r":
+                    chars[i] = " "
+                i += 1
+            continue
+        if state == "string":
+            if ch == "\\":
+                chars[i] = " "
+                if i + 1 < n:
+                    if chars[i + 1] not in "\n\r":
+                        chars[i + 1] = " "
+                    i += 2
+                else:
+                    i += 1
+            elif ch == '"':
+                chars[i] = " "
+                i += 1
+                state = "code"
+            else:
+                if ch not in "\n\r":
+                    chars[i] = " "
+                i += 1
+            continue
+        if state == "char":
+            if ch == "\\":
+                chars[i] = " "
+                if i + 1 < n:
+                    if chars[i + 1] not in "\n\r":
+                        chars[i + 1] = " "
+                    i += 2
+                else:
+                    i += 1
+            elif ch == "'":
+                chars[i] = " "
+                i += 1
+                state = "code"
+            else:
+                if ch not in "\n\r":
+                    chars[i] = " "
+                i += 1
+
+    sanitized = "".join(chars)
+    import re
+    match = re.search(
+        r"(?m)^\s*package\s+([A-Za-z_$][A-Za-z0-9_$]*(?:\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*;",
+        sanitized,
+    )
+    return re.sub(r"\s+", "", match.group(1)) if match else None
 
 class RepositoryScanner:
     TOOL_VERSION="aca-ingestion-0.4"

@@ -190,6 +190,61 @@ class CodeGraphTests(unittest.TestCase):
         v2 = Node.create("File", "REPO", "file:App.java", analysis_run_id="RUN2", revision="REV2")
         self.assertNotEqual(v1.id, v2.id)
 
+    def test_package_is_reachable_from_owning_module(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "module-a/src/main/java/com/example").mkdir(parents=True)
+            (root / "module-a/pom.xml").write_text("<project/>\\n", encoding="utf-8")
+            (root / "module-a/src/main/java/com/example/App.java").write_text(
+                "package com.example;\\nclass App {}\\n", encoding="utf-8"
+            )
+            graph = build_from_ingestion(RepositoryScanner().scan(root))
+            module = next(n for n in graph.nodes.values()
+                          if n.type == "Module" and n.properties["root"] == "module-a")
+            package = next(n for n in graph.nodes.values()
+                           if n.type == "Package" and n.properties["name"] == "com.example")
+            file_node = next(n for n in graph.nodes.values()
+                             if n.type == "File" and n.properties["path"].endswith("App.java"))
+            self.assertTrue(any(e.target == package.id for e in graph.outgoing(module.id, "CONTAINS")))
+            self.assertTrue(any(e.target == file_node.id for e in graph.outgoing(package.id, "CONTAINS")))
+            self.assertTrue(graph.paths(module.id, file_node.id, 2))
+
+    def test_serialized_node_id_tampering_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            graph = build_from_ingestion(RepositoryScanner().scan(Path(tmp)))
+            data = json.loads(graph.to_json())
+            data["nodes"][0]["id"] = "NODE-TAMPERED"
+            with self.assertRaises(Exception) as ctx:
+                Graph.from_dict(data)
+            self.assertIn("NODE_ID_MISMATCH", str(ctx.exception))
+
+    def test_serialized_edge_id_tampering_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.java").write_text("class App {}\\n", encoding="utf-8")
+            graph = build_from_ingestion(RepositoryScanner().scan(root))
+            data = json.loads(graph.to_json())
+            data["edges"][0]["id"] = "EDGE-TAMPERED"
+            with self.assertRaises(Exception) as ctx:
+                Graph.from_dict(data)
+            self.assertIn("EDGE_ID_MISMATCH", str(ctx.exception))
+
+    def test_java_package_parser_handles_comments_and_literals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = {
+                "Trailing.java": 'package com.trailing; // generated\nclass A {}\n',
+                "Block.java": '/* package fake.block; */\npackage com.block;\nclass B {}\n',
+                "Literal.java": 'String s = "/* package fake.literal; */";\npackage com.literal;\nclass C {}\n',
+            }
+            for name, content in cases.items():
+                (root / name).write_text(content, encoding="utf-8")
+            result = RepositoryScanner().scan(root)
+            packages = {r.path: r.package_name for r in result.files if r.kind == "java"}
+            self.assertEqual(packages["Trailing.java"], "com.trailing")
+            self.assertEqual(packages["Block.java"], "com.block")
+            self.assertEqual(packages["Literal.java"], "com.literal")
+
     def test_multiple_java_files_share_package_without_conflict(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
