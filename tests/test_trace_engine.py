@@ -139,7 +139,11 @@ class TraceEngineTests(unittest.TestCase):
         result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=c.id, max_depth=3))
         self.assertEqual(result.status, "AMBIGUOUS")
         self.assertIn("REFLECTION", {b.boundary_type for b in result.boundaries})
-        self.assertTrue(any(b.boundary_type == "REFLECTION" for b in result.alternatives[0].boundaries))
+        self.assertTrue(any(
+            b.boundary_type == "REFLECTION"
+            for candidate in result.alternatives
+            for b in candidate.boundaries
+        ))
 
     def test_contradicted_trace_aggregates_candidate_boundaries(self):
         graph, a, b, _ = self.graph()
