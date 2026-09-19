@@ -373,6 +373,11 @@ class ContradictionDetector:
             for candidate in candidates
             for step in candidate.steps
         }
+        # Candidate steps may be oriented opposite to canonical CodeGraph edges
+        # during INCOMING traversal; contradiction claims remain canonical.
+        candidate_canonical_edges = set(candidate_edges)
+        for source, relation, target in candidate_edges:
+            candidate_canonical_edges.add((target, relation, source))
         results: list[dict[str, Any]] = []
         for evidence_id, record in sorted(self.graph.evidence.items()):
             if not isinstance(record, dict) or record.get("type") != "contradiction":
@@ -385,7 +390,7 @@ class ContradictionDetector:
                 (edge.source, edge.relation, edge.target)
                 for edge in edges
             ]
-            if not all(claim in candidate_edges for claim in claims):
+            if not all(claim in candidate_canonical_edges for claim in claims):
                 continue
             results.append({
                 "affected_step": record.get("affected_step") or self._derive_affected_step(edges),
