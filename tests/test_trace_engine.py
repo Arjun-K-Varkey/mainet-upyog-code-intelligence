@@ -84,6 +84,33 @@ class TraceEngineTests(unittest.TestCase):
         self.assertEqual(result.steps[0].status, "UNKNOWN")
         self.assertEqual(result.boundaries[0].boundary_type, "REFLECTION")
 
+    def test_ambiguous_path_preserves_missing_evidence_boundary(self):
+        graph, a, b, c = self.graph()
+        edge = next(iter(graph.outgoing(a.id)))
+        from dataclasses import replace
+        graph.edges[edge.id] = replace(edge, evidence_refs=())
+        result = TraceEngine(graph).trace(TraceRequest(a.id, max_depth=1, max_paths=2))
+        self.assertTrue(any(b.boundary_type == "MISSING_EVIDENCE" for b in result.boundaries + tuple(
+            boundary for candidate in result.alternatives for boundary in candidate.boundaries
+        )))
+
+    def test_incoming_contradiction_matches_canonical_edge(self):
+        graph, a, b, _ = self.graph()
+        edge = next(iter(graph.outgoing(a.id)))
+        graph.evidence["E_CONTRADICTION"] = {
+            "type": "contradiction",
+            "edge_ids": [edge.id],
+            "claims": [{
+                "source_node": edge.source, "relation": edge.relation,
+                "target_node": edge.target, "evidence_refs": ["E_CONTRADICTION"],
+            }],
+            "affected_step": 1, "resolution_state": "UNRESOLVED",
+            "evidence_refs": ["E_CONTRADICTION"],
+        }
+        result = TraceEngine(graph).trace(TraceRequest(b.id, target_id=a.id, direction="INCOMING", max_depth=1))
+        self.assertEqual(result.status, "CONTRADICTED")
+
+
     def test_boundary_round_trip_preserves_nested_metadata(self):
         graph, a, b, _ = self.graph()
         edge = next(iter(graph.outgoing(a.id)))
