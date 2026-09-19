@@ -64,6 +64,23 @@ class TraceEngineTests(unittest.TestCase):
             TraceRequest(c.id, target_id=a.id, direction="INCOMING", max_depth=2)
         )
         self.assertEqual(result.status, "CONFIRMED")
+        self.assertEqual(result.steps[0].source_node, c.id)
+        self.assertEqual(result.steps[0].target_node, a.id)
+        self.assertEqual(result.steps[0].relation, "CONTAINS")
+        self.assertIn(result.steps[0].evidence_refs[0], graph.evidence)
+
+    def test_explicit_boundary_evidence_produces_unknown(self):
+        graph, a, b, _ = self.graph()
+        edge = next(iter(graph.outgoing(a.id)))
+        graph.evidence["E_BOUNDARY"] = {
+            "boundary_type": "reflection",
+            "reason": "Target is reached through reflection.",
+        }
+        edge.evidence_refs = ("E_BOUNDARY",)
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
+        self.assertEqual(result.status, "UNKNOWN")
+        self.assertEqual(result.steps[0].status, "UNKNOWN")
+        self.assertEqual(result.boundaries[0].boundary_type, "REFLECTION")
 
     def test_ambiguous_trace_preserves_alternatives(self):
         graph, a, _, c = self.graph()
