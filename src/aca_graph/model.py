@@ -140,6 +140,8 @@ class Graph:
                 src,tgt=self.nodes[edge.source],self.nodes[edge.target]
                 if src.repository_id!=edge.repository_id or tgt.repository_id!=edge.repository_id: errors.append({"code":"REPOSITORY_MISMATCH","id":edge.id})
                 if edge.revision!=self.revision: errors.append({"code":"REVISION_MISMATCH","id":edge.id})
+                if src.revision!=edge.revision: errors.append({"code":"SOURCE_REVISION_MISMATCH","id":edge.id})
+                if tgt.revision!=edge.revision: errors.append({"code":"TARGET_REVISION_MISMATCH","id":edge.id})
                 if edge.analysis_run_id!=self.analysis_run_id: errors.append({"code":"ANALYSIS_RUN_MISMATCH","id":edge.id})
                 key=(edge.source,edge.relation,edge.target)
                 if key in seen: errors.append({"code":"DUPLICATE_CANONICAL_EDGE","id":edge.id})
