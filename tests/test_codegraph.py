@@ -216,6 +216,22 @@ class CodeGraphTests(unittest.TestCase):
             second = build_from_ingestion(RepositoryScanner(config).scan(right_root))
             self.assertEqual(first.to_json(), second.to_json())
 
+    def test_git_revision_evidence_and_graph_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "App.java").write_text("class App {}\n", encoding="utf-8")
+            import subprocess
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "aca@test"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "ACA Test"], cwd=root, check=True)
+            subprocess.run(["git", "add", "App.java"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-m", "fixture"], cwd=root, check=True, capture_output=True)
+            result = RepositoryScanner().scan(root)
+            self.assertIsNotNone(result.repository["revision"])
+            self.assertTrue(any(e.type == "revision" for e in result.evidence))
+            graph = build_from_ingestion(result)
+            self.assertEqual(graph.validate(), [])
+
     def test_serialization_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             graph = build_from_ingestion(RepositoryScanner().scan(Path(tmp)))
