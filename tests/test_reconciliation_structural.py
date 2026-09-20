@@ -19,7 +19,7 @@ class StructuralReconciliationTests(unittest.TestCase):
         return ReconciliationRequest(
             "recon-structural",
             self.context("source", "r1", "run-s"),
-            self.context("target", "target", "r2", "run-t"),
+            self.context("target", "r2", "run-t"),
         )
 
     def test_exact_match_and_source_removal_and_target_addition(self):
