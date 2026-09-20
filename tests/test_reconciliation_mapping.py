@@ -31,6 +31,17 @@ class MappingRuleTests(unittest.TestCase):
         )
         self.assertEqual(result, ())
 
+    def test_structural_signature_produces_inferred_candidate_with_evidence(self):
+        source = {"id": "S1", "type": "Method", "canonical_key": "source.A", "properties": {"signature": "find(String)"}, "evidence_refs": ["E1"]}
+        target = {"id": "T1", "type": "Method", "canonical_key": "target.B", "properties": {"signature": "find(String)"}, "evidence_refs": ["E2"]}
+        result = MappingRuleRegistry().map_nodes(source, [target], self.request())
+        structural = [x for x in result if x.mapping_signals == ("STRUCTURAL_SIGNATURE",)]
+        self.assertEqual(len(structural), 1)
+        self.assertEqual(structural[0].state, "INFERRED")
+        self.assertEqual(structural[0].provenance, "inferred")
+        self.assertEqual(structural[0].confidence, 0.8)
+        self.assertEqual(structural[0].evidence_refs, ("E1", "E2"))
+
     def test_mapping_is_deterministically_ordered(self):
         nodes = [
             {"id": "T2", "type": "Class", "canonical_key": "Customer"},
