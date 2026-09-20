@@ -40,7 +40,7 @@ class TraceEngineTests(unittest.TestCase):
     def test_trace_validation_resolves_canonical_evidence(self):
         graph, a, b, _ = self.graph()
         evidence = Evidence.create(project_id="ACA", repository_id="REPO", revision=self.REV, run_id=self.RUN, type="source", subject="module:a", source=EvidenceSource("test", "1"), value={"kind": "java"})
-        graph.evidence["E1"] = evidence.to_dict()
+        graph.evidence[evidence.id] = evidence.to_dict()
         result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
         self.assertEqual(result.validate(graph, EvidenceResolver(EvidenceRegistry([evidence]))), [])
         self.assertTrue(any(e["code"] == "UNRESOLVED_CANONICAL_EVIDENCE" for e in result.validate(graph, EvidenceResolver(EvidenceRegistry()))))
