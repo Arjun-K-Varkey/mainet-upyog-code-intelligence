@@ -65,7 +65,7 @@ class EvidenceSource:
             raise EvidenceValidationError("SOURCE_LINE_RANGE_INCOMPLETE")
         if self.start_line is not None and (self.start_line < 1 or self.end_line < self.start_line):
             raise EvidenceValidationError("INVALID_SOURCE_LINE_RANGE")
-        if self.file is not None and self.file.startswith(("/", "\\")):
+        if self.file is not None and (self.file.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", self.file))):
             raise EvidenceValidationError("ABSOLUTE_SOURCE_PATH_NOT_ALLOWED")
 
     def to_dict(self) -> dict[str, Any]:
