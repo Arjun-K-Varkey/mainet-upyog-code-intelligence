@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
 import re
@@ -149,7 +148,7 @@ class Evidence:
             _canonical(self.value)
         except EvidenceValidationError:
             add("INVALID_VALUE")
-        if self.status != "REDACTED" and self._contains_secret_like_data():
+        if self._contains_secret_like_data():
             add("SECRET_LIKE_VALUE")
         if repository_id is not None and self.repository_id != repository_id:
             add("REPOSITORY_CONTEXT_MISMATCH")
