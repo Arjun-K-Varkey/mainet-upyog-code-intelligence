@@ -73,7 +73,7 @@ The canonical identity input is:
 
 Equivalent records must produce the same ID.
 
-The serialized representation must use stable field ordering and stable ordering for nested maps. List ordering is preserved by default because list order may be semantically meaningful. The canonical model must not infer unordered-list semantics or arbitrarily sort lists; producers representing unordered collections must provide an explicitly canonical unordered representation before evidence identity is computed.
+The serialized representation must use stable field ordering for maps and deterministic ordering for list-like values. List-like values are treated as unordered semantic collections for canonical evidence identity; equivalent values with different producer ordering must therefore produce the same canonical representation and ID. Producers must use an explicit structured value when sequence order is semantically meaningful rather than relying on a generic list value.
 
 ## 5. Provenance
 
