@@ -72,6 +72,33 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceValidationError):
             EvidenceSource("aca-test", "1.0", file="x.java", start_line=12, end_line=11)
 
+    def test_source_metadata_types_rejected_deterministically(self):
+        cases = (
+            (dict(tool=1, version="1.0"), "INVALID_SOURCE_METADATA_TYPE"),
+            (dict(tool="aca-test", version=1), "INVALID_SOURCE_METADATA_TYPE"),
+            (dict(tool="aca-test", version="1.0", file=1), "INVALID_SOURCE_METADATA_TYPE"),
+            (dict(tool="aca-test", version="1.0", start_line="10", end_line=12), "INVALID_SOURCE_METADATA_TYPE"),
+            (dict(tool="aca-test", version="1.0", start_line=10, end_line="12"), "INVALID_SOURCE_METADATA_TYPE"),
+        )
+        for overrides, code in cases:
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(EvidenceValidationError, code):
+                    EvidenceSource(**overrides)
+
+    def test_from_dict_missing_required_fields_is_machine_readable(self):
+        raw = Evidence.create(**self.kwargs()).to_dict()
+        raw.pop("project_id")
+        raw.pop("status")
+        with self.assertRaisesRegex(EvidenceValidationError, r'MISSING_REQUIRED_FIELD.*project_id.*MISSING_REQUIRED_FIELD.*status'):
+            Evidence.from_dict(raw)
+
+    def test_from_dict_malformed_source_is_machine_readable(self):
+        raw = Evidence.create(**self.kwargs()).to_dict()
+        raw["source"] = "not-a-source-object"
+        with self.assertRaisesRegex(EvidenceValidationError, "INVALID_SOURCE_METADATA"):
+            Evidence.from_dict(raw)
+
+
     def test_unsupported_value_rejected(self):
         with self.assertRaises(EvidenceValidationError):
             Evidence.create(**self.kwargs(value={"bad": object()}))
