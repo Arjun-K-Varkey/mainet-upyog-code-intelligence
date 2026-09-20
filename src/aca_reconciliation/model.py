@@ -92,11 +92,18 @@ class CandidateMapping:
     def create(cls, source_node: str, target_node: str | None, *,
                reconciliation_id: str, methodology_version: str, state: str,
                provenance: str, confidence: float | None = None,
+               source_repository_id: str | None = None, source_revision: str | None = None,
+               target_repository_id: str | None = None, target_revision: str | None = None,
                evidence_refs: tuple[str, ...] = (), rationale: str | None = None,
                mapping_signals: tuple[str, ...] = (), alternatives: tuple[str, ...] = ()) -> "CandidateMapping":
         payload = {
             "schema": SCHEMA_VERSION, "reconciliation_id": reconciliation_id,
-            "methodology": methodology_version, "source": source_node, "target": target_node,
+            "methodology": methodology_version,
+            "source_repository_id": source_repository_id,
+            "source_revision": source_revision,
+            "target_repository_id": target_repository_id,
+            "target_revision": target_revision,
+            "source": source_node, "target": target_node,
         }
         return cls(_id("MAP", payload), source_node, target_node, state, provenance,
                    confidence, tuple(sorted(set(evidence_refs))), rationale,
@@ -139,8 +146,15 @@ class ReconciliationFinding:
                related_mapping_ids: tuple[str, ...] = (), related_trace_ids: tuple[str, ...] = (),
                related_edge_ids: tuple[str, ...] = (), boundaries: tuple[Mapping[str, Any], ...] = (),
                confidence: float | None = None) -> "ReconciliationFinding":
-        payload = {"schema": SCHEMA_VERSION, "reconciliation_id": reconciliation_id,
-                   "category": category, "source": source_subject, "target": target_subject}
+        payload = {
+            "schema": SCHEMA_VERSION, "reconciliation_id": reconciliation_id,
+            "category": category,
+            "source_repository_id": source_context.repository_id,
+            "source_revision": source_context.revision,
+            "target_repository_id": target_context.repository_id,
+            "target_revision": target_context.revision,
+            "source": source_subject, "target": target_subject,
+        }
         return cls(_id("FND", payload), category, state, provenance, source_subject, target_subject,
                    source_context, target_context, tuple(sorted(set(evidence_refs))),
                    tuple(sorted(set(source_evidence_refs))), tuple(sorted(set(target_evidence_refs))),
