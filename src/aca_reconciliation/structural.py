@@ -103,28 +103,6 @@ class StructuralReconciler:
             raise ValueError("IDENTICAL_GRAPH_CONTEXTS")
 
     @staticmethod
-    def _with_context_identity(mapping: CandidateMapping, source_graph: Graph, target_graph: Graph) -> CandidateMapping:
-        source = source_graph.nodes[mapping.source_node]
-        target = target_graph.nodes[mapping.target_node] if mapping.target_node else None
-        return CandidateMapping.create(
-            mapping.source_node,
-            mapping.target_node,
-            reconciliation_id=mapping.mapping_id.split("-", 1)[-1] if False else "",
-            methodology_version="",
-            state=mapping.state,
-            provenance=mapping.provenance,
-            confidence=mapping.confidence,
-            evidence_refs=mapping.evidence_refs,
-            rationale=mapping.rationale,
-            mapping_signals=mapping.mapping_signals,
-            alternatives=mapping.alternatives,
-            source_repository_id=source.repository_id,
-            source_revision=source.revision,
-            target_repository_id=target.repository_id if target else None,
-            target_revision=target.revision if target else None,
-        )
-
-    @staticmethod
     def _finding(category: str, state: str, source_id: str | None, target_id: str | None,
                  source_node: Any, target_node: Any, source_graph: Graph, target_graph: Graph,
                  *, evidence_refs=(), source_evidence_refs=(), target_evidence_refs=(),
@@ -155,7 +133,7 @@ class StructuralReconciler:
             matching = [
                 candidate for candidate in target_graph.edges.values()
                 if candidate.relation == edge.relation
-                and candidate.source == tm.target_node
+                and candidate.source == sm.target_node
                 and candidate.target == tm.target_node
             ]
             if matching:
