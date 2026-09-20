@@ -1,4 +1,4 @@
-"""Deterministic ACA-005 candidate mapping rules."""
+""""Deterministic ACA-005 candidate mapping rules."""
 
 from __future__ import annotations
 
@@ -104,6 +104,15 @@ class StructuralSignalRule(MappingRule):
 
 
 class MappingRuleRegistry:
+    """Apply mapping rules as an ordered, staged strategy.
+
+    Rule order is semantic precedence, not merely execution order. Once a
+    higher-precedence rule produces candidates, weaker rules are not allowed
+    to add competing candidates for the same source node. This preserves
+    deterministic precedence while still retaining ambiguity among candidates
+    produced by the winning stage.
+    """
+
     def __init__(self, rules: Iterable[MappingRule] | None = None) -> None:
         self._rules = tuple(rules or (
             MappingRule("exact-canonical-identity", "0.1", "EXACT_CANONICAL_IDENTITY"),
@@ -120,9 +129,10 @@ class MappingRuleRegistry:
         target_nodes: Iterable[Mapping[str, Any]],
         request: ReconciliationRequest,
     ) -> tuple[CandidateMapping, ...]:
-        results = {}
         targets = tuple(target_nodes)
         for rule in self._rules:
-            for candidate in rule.apply(source_node, targets, request):
-                results.setdefault(candidate.mapping_id, candidate)
-        return tuple(results[key] for key in sorted(results))
+            candidates = rule.apply(source_node, targets, request)
+            if candidates:
+                return tuple(sorted(candidates, key=lambda item: item.mapping_id))
+        return ()
+"
