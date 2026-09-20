@@ -93,6 +93,7 @@ class StructuralSignalRule(MappingRule):
                 provenance="inferred",
                 confidence=0.8,
                 mapping_signals=(self.signal,),
+                evidence_refs=tuple(sorted(set(source_node.get("evidence_refs", ())) | set(target.get("evidence_refs", ())))),
                 rationale="Deterministic structural signature matched; semantic equivalence is not asserted.",
                 source_repository_id=request.source_context.repository_id,
                 source_revision=request.source_context.revision,
