@@ -64,8 +64,16 @@ class EvidenceSource:
     end_line: int | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.tool, str) or not isinstance(self.version, str):
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA_TYPE")
         if not self.tool or not self.version:
             raise EvidenceValidationError("SOURCE_TOOL_AND_VERSION_REQUIRED")
+        if self.file is not None and not isinstance(self.file, str):
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA_TYPE")
+        if self.start_line is not None and not isinstance(self.start_line, int):
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA_TYPE")
+        if self.end_line is not None and not isinstance(self.end_line, int):
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA_TYPE")
         if (self.start_line is None) != (self.end_line is None):
             raise EvidenceValidationError("SOURCE_LINE_RANGE_INCOMPLETE")
         if self.start_line is not None and (self.start_line < 1 or self.end_line < self.start_line):
@@ -200,15 +208,40 @@ class Evidence:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], **context: str) -> "Evidence":
+        if not isinstance(raw, Mapping):
+            raise EvidenceValidationError("INVALID_EVIDENCE_RECORD")
         if raw.get("schema_version") != SCHEMA_VERSION:
             raise EvidenceValidationError("UNSUPPORTED_EVIDENCE_SCHEMA")
+
+        required_fields = (
+            "id", "project_id", "repository_id", "revision", "run_id",
+            "type", "subject", "source", "value", "status",
+        )
+        missing = [field for field in required_fields if field not in raw]
+        if missing:
+            errors = [{"code": "MISSING_REQUIRED_FIELD", "field": field} for field in missing]
+            raise EvidenceValidationError(json.dumps(errors, sort_keys=True))
+
         source_raw = raw["source"]
-        source = EvidenceSource(**source_raw)
+        if not isinstance(source_raw, Mapping):
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA")
+        try:
+            source = EvidenceSource(**dict(source_raw))
+        except TypeError as exc:
+            raise EvidenceValidationError("INVALID_SOURCE_METADATA") from exc
+
+        try:
+            frozen_value = _freeze(raw["value"])
+        except EvidenceValidationError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise EvidenceValidationError("INVALID_VALUE") from exc
+
         evidence = cls(
             id=raw["id"], project_id=raw["project_id"], repository_id=raw["repository_id"],
             revision=raw["revision"], run_id=raw["run_id"], type=raw["type"],
             subject=raw["subject"], relation=raw.get("relation"), object=raw.get("object"),
-            source=source, value=_freeze(raw.get("value")), observed_at=raw.get("observed_at"),
+            source=source, value=frozen_value, observed_at=raw.get("observed_at"),
             status=raw["status"],
         )
         evidence.require_valid(**context)
