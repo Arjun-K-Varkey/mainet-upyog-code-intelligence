@@ -40,6 +40,10 @@ class MappingRule:
                     state="CONFIRMED",
                     provenance="deterministic",
                     mapping_signals=(self.signal,),
+                    source_repository_id=request.source_context.repository_id,
+                    source_revision=request.source_context.revision,
+                    target_repository_id=request.target_context.repository_id,
+                    target_revision=request.target_context.revision,
                 )
             )
         return tuple(sorted(candidates, key=lambda item: item.mapping_id))
