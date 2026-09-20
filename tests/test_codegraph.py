@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.aca_graph import Edge, Graph, Node, build_from_ingestion
 from src.aca_ingestion.scanner import RepositoryScanner
+from src.aca_evidence import Evidence, EvidenceRegistry, EvidenceResolver, EvidenceSource
 
 
 def fixture(root: Path) -> Path:
@@ -76,6 +77,18 @@ class CodeGraphTests(unittest.TestCase):
             self.assertTrue(any(n.type == "File" for n in graph.nodes.values()))
             self.assertTrue(graph.edges)
             self.assertTrue(graph.evidence)
+
+    def test_canonical_evidence_resolver_validates_graph_references(self):
+        graph = Graph({"id": "REPO"}, "REV1", self.RUN)
+        a = Node.create("Module", "REPO", "module:a", analysis_run_id=self.RUN, revision="REV1")
+        b = Node.create("File", "REPO", "file:b", analysis_run_id=self.RUN, revision="REV1")
+        graph.add_node(a); graph.add_node(b)
+        evidence = Evidence.create(project_id="ACA", repository_id="REPO", revision="REV1", run_id=self.RUN, type="source", subject="file:b", source=EvidenceSource("test", "1"), value={"kind": "java"})
+        graph.evidence[evidence.id] = evidence.to_dict()
+        graph.add_edge(Edge.create(a, "CONTAINS", b, evidence_refs=(evidence.id,), analysis_run_id=self.RUN, revision="REV1"))
+        resolver = EvidenceResolver(EvidenceRegistry([evidence]))
+        self.assertEqual(graph.validate(resolver), [])
+        self.assertTrue(any(e["code"] == "UNRESOLVED_CANONICAL_EVIDENCE" for e in graph.validate(EvidenceResolver(EvidenceRegistry()))))
 
     def test_serialization_is_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:

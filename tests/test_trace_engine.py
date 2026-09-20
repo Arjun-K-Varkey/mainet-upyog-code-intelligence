@@ -2,6 +2,7 @@ import json
 import unittest
 
 from src.aca_graph import Edge, Graph, Node
+from src.aca_evidence import Evidence, EvidenceRegistry, EvidenceResolver, EvidenceSource
 from src.aca_graph.trace import (
     ANALYZER_VERSION,
     METHODOLOGY_VERSION,
@@ -35,6 +36,17 @@ class TraceEngineTests(unittest.TestCase):
                                    analysis_run_id=self.RUN, revision=self.REV))
         graph.require_valid()
         return graph, a, b, c
+
+    def test_trace_validation_resolves_canonical_evidence(self):
+        graph, a, b, _ = self.graph()
+        evidence = Evidence.create(project_id="ACA", repository_id="REPO", revision=self.REV, run_id=self.RUN, type="source", subject="module:a", source=EvidenceSource("test", "1"), value={"kind": "java"})
+        from dataclasses import replace
+        graph.evidence[evidence.id] = evidence.to_dict()
+        edge = next(iter(graph.outgoing(a.id)))
+        graph.edges[edge.id] = replace(edge, evidence_refs=(evidence.id,))
+        result = TraceEngine(graph).trace(TraceRequest(a.id, target_id=b.id, max_depth=1))
+        self.assertEqual(result.validate(graph, EvidenceResolver(EvidenceRegistry([evidence]))), [])
+        self.assertTrue(any(e["code"] == "UNRESOLVED_CANONICAL_EVIDENCE" for e in result.validate(graph, EvidenceResolver(EvidenceRegistry()))))
 
     def test_confirmed_trace_has_canonical_steps(self):
         graph, a, b, c = self.graph()

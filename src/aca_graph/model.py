@@ -114,7 +114,7 @@ class Graph:
             data = record.__dict__.copy() if hasattr(record,"__dict__") else dict(record)
             self.evidence[data.pop("id")] = data
 
-    def validate(self) -> list[dict[str,str]]:
+    def validate(self, evidence_resolver: Any | None = None) -> list[dict[str,str]]:
         errors=[]; seen=set()
         if not self.analysis_run_id: errors.append({"code":"MISSING_GRAPH_ANALYSIS_RUN_ID","id":"graph"})
         for node in self.nodes.values():
@@ -132,6 +132,9 @@ class Graph:
             if node.analysis_run_id != self.analysis_run_id: errors.append({"code":"ANALYSIS_RUN_MISMATCH","id":node.id})
             for ref in node.evidence_refs:
                 if ref not in self.evidence: errors.append({"code":"UNRESOLVED_EVIDENCE","id":node.id,"evidence":ref})
+                if evidence_resolver is not None:
+                    try: evidence_resolver.resolve((ref,), repository_id=self.repository.get("id"), revision=self.revision, run_id=self.analysis_run_id)
+                    except Exception: errors.append({"code":"UNRESOLVED_CANONICAL_EVIDENCE","id":node.id,"evidence":ref})
         for edge in self.edges.values():
             if edge.source not in self.nodes: errors.append({"code":"ORPHAN_EDGE_SOURCE","id":edge.id})
             if edge.target not in self.nodes: errors.append({"code":"ORPHAN_EDGE_TARGET","id":edge.id})
@@ -161,6 +164,9 @@ class Graph:
                 seen.add(key)
             for ref in edge.evidence_refs:
                 if ref not in self.evidence: errors.append({"code":"UNRESOLVED_EVIDENCE","id":edge.id,"evidence":ref})
+                if evidence_resolver is not None:
+                    try: evidence_resolver.resolve((ref,), repository_id=self.repository.get("id"), revision=self.revision, run_id=self.analysis_run_id)
+                    except Exception: errors.append({"code":"UNRESOLVED_CANONICAL_EVIDENCE","id":edge.id,"evidence":ref})
         return errors
 
     def require_valid(self):

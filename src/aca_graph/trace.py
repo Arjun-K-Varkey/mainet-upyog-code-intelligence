@@ -124,12 +124,20 @@ class Trace:
     boundaries: tuple[TraceBoundary, ...] = ()
     contradictions: tuple[dict[str, Any], ...] = ()
 
-    def validate(self, graph: Graph | None = None) -> list[dict[str, Any]]:
+    def validate(self, graph: Graph | None = None, evidence_resolver: Any | None = None) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         def add(code: str, message: str) -> None:
             errors.append({"code": code, "message": message})
 
         evidence_set = set(self.evidence)
+
+        def resolve_canonical(refs: tuple[str, ...]) -> None:
+            if evidence_resolver is None or not refs:
+                return
+            try:
+                evidence_resolver.resolve(refs, repository_id=self.repository_id, revision=self.revision, run_id=self.analysis_run_id)
+            except Exception as exc:
+                add("UNRESOLVED_CANONICAL_EVIDENCE", str(exc))
 
         def validate_steps(steps: tuple[TraceStep, ...], context: str) -> None:
             ids = [s.step_id for s in steps]
@@ -155,6 +163,7 @@ class Trace:
                     add("MISSING_STEP_EVIDENCE", f"{context} material step {step.step_id} requires evidence")
                 if not set(step.evidence_refs).issubset(evidence_set):
                     add("UNRESOLVED_STEP_EVIDENCE", f"{context} step {step.step_id} references evidence not in trace evidence")
+                resolve_canonical(step.evidence_refs)
                 for boundary_index, boundary in enumerate(step.boundaries, 1):
                     if boundary.boundary_type not in BOUNDARY_TYPES:
                         add("INVALID_STEP_BOUNDARY_TYPE", f"{context} step {step.step_id} boundary {boundary_index} has invalid type")
@@ -164,6 +173,7 @@ class Trace:
                         add("MISSING_STEP_BOUNDARY_REASON", f"{context} step {step.step_id} boundary {boundary_index} requires reason")
                     if not set(boundary.evidence_refs).issubset(evidence_set):
                         add("UNRESOLVED_STEP_BOUNDARY_EVIDENCE", f"{context} step {step.step_id} boundary {boundary_index} evidence does not resolve")
+                    resolve_canonical(boundary.evidence_refs)
                 if graph is not None:
                     if graph.find_node(step.source_node) is None:
                         add("MISSING_SOURCE_NODE", f"{context} step {step.step_id} source node does not exist")
@@ -181,6 +191,12 @@ class Trace:
                             expected = direct if step.traversal_direction == "OUTGOING" else reversed_endpoints
                             if not expected:
                                 add("EDGE_ID_MISMATCH", f"{context} step {step.step_id} edge identity does not match traversal direction/endpoints/relation")
+
+        resolve_canonical(self.evidence)
+        for boundary in self.boundaries:
+            resolve_canonical(boundary.evidence_refs)
+        for contradiction in self.contradictions:
+            resolve_canonical(tuple(contradiction.get("evidence_refs", ())))
 
         if not self.repository_id:
             add("MISSING_REPOSITORY_ID", "repository_id is required")
@@ -279,8 +295,8 @@ class Trace:
             add("TRACE_ID_MISMATCH", "trace_id does not match canonical identity")
         return errors
 
-    def require_valid(self, graph: Graph | None = None) -> None:
-        errors = self.validate(graph)
+    def require_valid(self, graph: Graph | None = None, evidence_resolver: Any | None = None) -> None:
+        errors = self.validate(graph, evidence_resolver)
         if errors:
             raise TraceValidationError(json.dumps(errors, sort_keys=True))
 
@@ -313,7 +329,7 @@ class Trace:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any], graph: Graph | None = None) -> "Trace":
+    def from_dict(cls, raw: dict[str, Any], graph: Graph | None = None, evidence_resolver: Any | None = None) -> "Trace":
         if raw.get("schema_version") != TRACE_SCHEMA_VERSION:
             raise TraceValidationError("UNSUPPORTED_TRACE_SCHEMA")
         def boundary(b: dict[str, Any]) -> TraceBoundary:
@@ -351,7 +367,7 @@ class Trace:
                 for b in raw.get("boundaries", [])),
             contradictions=tuple(raw.get("contradictions", [])),
         )
-        trace.require_valid(graph)
+        trace.require_valid(graph, evidence_resolver)
         return trace
 
 
@@ -760,9 +776,9 @@ class TraceEngine:
         return f"STEP-{digest[:20]}"
 
 
-def validate_trace_dict(raw: dict[str, Any], graph: Graph | None = None) -> list[dict[str, Any]]:
+def validate_trace_dict(raw: dict[str, Any], graph: Graph | None = None, evidence_resolver: Any | None = None) -> list[dict[str, Any]]:
     try:
-        Trace.from_dict(raw, graph=graph)
+        Trace.from_dict(raw, graph=graph, evidence_resolver=evidence_resolver)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return [{"code": "INVALID_TRACE", "message": str(exc)}]
     return []
