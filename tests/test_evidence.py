@@ -3,6 +3,7 @@ import unittest
 
 from src.aca_evidence import (
     EVIDENCE_TYPES, Evidence, EvidenceSource, EvidenceValidationError, SCHEMA_VERSION,
+    EvidenceRegistry, EvidenceResolver,
 )
 
 
@@ -30,6 +31,11 @@ class EvidenceTests(unittest.TestCase):
         b = Evidence.create(**self.kwargs(value={"a": 1, "b": 2}))
         self.assertEqual(a.id, b.id)
         self.assertEqual(a.to_json(), b.to_json())
+
+    def test_ordered_lists_preserve_semantics(self):
+        a = Evidence.create(**self.kwargs(value={"items": ["a", "b"]}))
+        b = Evidence.create(**self.kwargs(value={"items": ["b", "a"]}))
+        self.assertNotEqual(a.id, b.id)
 
     def test_identity_independent_of_absolute_checkout_path(self):
         a = Evidence.create(**self.kwargs(subject="src/example.java", value={"path": "src/example.java"}))
@@ -99,6 +105,23 @@ class EvidenceTests(unittest.TestCase):
         e = Evidence.create(**self.kwargs())
         with self.assertRaises(EvidenceValidationError):
             e.require_valid(repository_id="OTHER")
+
+    def test_registry_resolves_canonical_evidence(self):
+        e = Evidence.create(**self.kwargs())
+        resolver = EvidenceResolver(EvidenceRegistry([e]))
+        self.assertEqual(resolver.resolve((e.id,), repository_id="REPO", revision="REV1", run_id="RUN1"), (e.id,))
+
+    def test_registry_rejects_unresolved_or_wrong_context(self):
+        e = Evidence.create(**self.kwargs())
+        resolver = EvidenceResolver(EvidenceRegistry([e]))
+        with self.assertRaises(EvidenceValidationError): resolver.resolve(("EVID-MISSING",))
+        with self.assertRaises(EvidenceValidationError): resolver.resolve((e.id,), repository_id="OTHER", revision="REV1", run_id="RUN1")
+
+    def test_registry_rejects_conflicting_duplicate_id(self):
+        e = Evidence.create(**self.kwargs())
+        other = Evidence.create(**self.kwargs(value={"classification": "other"}))
+        from dataclasses import replace
+        with self.assertRaises(EvidenceValidationError): EvidenceRegistry([e, replace(other, id=e.id)])
 
     def test_reference_id_is_stable_and_schema_versioned(self):
         e = Evidence.create(**self.kwargs())
