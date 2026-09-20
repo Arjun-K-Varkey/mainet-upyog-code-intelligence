@@ -40,6 +40,7 @@ class MappingRule:
                     state="CONFIRMED",
                     provenance="deterministic",
                     mapping_signals=(self.signal,),
+                    evidence_refs=tuple(sorted(set(source_node.get("evidence_refs", ())) | set(target.get("evidence_refs", ())))),
                     source_repository_id=request.source_context.repository_id,
                     source_revision=request.source_context.revision,
                     target_repository_id=request.target_context.repository_id,
