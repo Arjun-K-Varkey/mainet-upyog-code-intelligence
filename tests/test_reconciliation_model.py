@@ -48,6 +48,23 @@ class ReconciliationModelTests(unittest.TestCase):
         self.assertEqual(mapping1.evidence_refs, ("E1", "E2"))
         self.assertEqual(mapping1.mapping_signals, ("identity", "signature"))
 
+    def test_candidate_mapping_identity_includes_repository_context(self):
+        m1 = CandidateMapping.create(
+            "NODE-A", "NODE-B", reconciliation_id="recon-1",
+            methodology_version="aca-recon-method-0.1",
+            state="CONFIRMED", provenance="deterministic",
+            source_repository_id="mainet", source_revision="r1",
+            target_repository_id="upyog", target_revision="r2",
+        )
+        m2 = CandidateMapping.create(
+            "NODE-A", "NODE-B", reconciliation_id="recon-1",
+            methodology_version="aca-recon-method-0.1",
+            state="CONFIRMED", provenance="deterministic",
+            source_repository_id="other", source_revision="r1",
+            target_repository_id="upyog", target_revision="r2",
+        )
+        self.assertNotEqual(m1.mapping_id, m2.mapping_id)
+
     def test_result_serialization_is_deterministic(self):
         source, target = self.contexts()
         req = self.request()
