@@ -26,10 +26,15 @@ class EvidenceValidationError(ValueError):
 def _freeze(value: Any) -> Any:
     if isinstance(value, dict):
         return MappingProxyType({k: _freeze(value[k]) for k in sorted(value)})
-    if isinstance(value, list):
-        return tuple(_freeze(v) for v in value)
-    if isinstance(value, tuple):
-        return tuple(_freeze(v) for v in value)
+    if isinstance(value, (list, tuple)):
+        frozen = tuple(_freeze(v) for v in value)
+        return tuple(sorted(
+            frozen,
+            key=lambda item: json.dumps(
+                _thaw(item), sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ),
+        ))
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     raise EvidenceValidationError(f"UNSUPPORTED_VALUE_TYPE:{type(value).__name__}")
