@@ -40,6 +40,10 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(EvidenceValidationError):
             EvidenceSource("aca-test", "1.0", file="/tmp/example.java")
 
+    def test_windows_absolute_source_path_rejected(self):
+        with self.assertRaises(EvidenceValidationError):
+            EvidenceSource("aca-test", "1.0", file="C:\\\\repo\\\\example.java")
+
     def test_id_tampering_rejected(self):
         e = Evidence.create(**self.kwargs())
         raw = e.to_dict()
@@ -72,6 +76,10 @@ class EvidenceTests(unittest.TestCase):
     def test_redacted_secret_is_allowed(self):
         e = Evidence.create(**self.kwargs(status="REDACTED", value={"password": "[REDACTED]"}))
         self.assertEqual(e.status, "REDACTED")
+
+    def test_redacted_status_does_not_allow_raw_secret(self):
+        with self.assertRaises(EvidenceValidationError):
+            Evidence.create(**self.kwargs(status="REDACTED", value={"password": "still-secret"}))
 
     def test_json_round_trip(self):
         e = Evidence.create(**self.kwargs(observed_at="2026-09-20T00:00:00Z"))
