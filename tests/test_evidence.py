@@ -32,10 +32,16 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(a.id, b.id)
         self.assertEqual(a.to_json(), b.to_json())
 
-    def test_ordered_lists_preserve_semantics(self):
+    def test_deterministic_identity_ignores_list_order(self):
         a = Evidence.create(**self.kwargs(value={"items": ["a", "b"]}))
         b = Evidence.create(**self.kwargs(value={"items": ["b", "a"]}))
-        self.assertNotEqual(a.id, b.id)
+        self.assertEqual(a.id, b.id)
+        self.assertEqual(a.to_json(), b.to_json())
+
+    def test_deterministic_identity_ignores_nested_list_order(self):
+        a = Evidence.create(**self.kwargs(value={"items": [{"b": 2, "a": 1}, {"x": [2, 1]}]}))
+        b = Evidence.create(**self.kwargs(value={"items": [{"x": [1, 2]}, {"a": 1, "b": 2}]}))
+        self.assertEqual(a.id, b.id)
 
     def test_identity_independent_of_absolute_checkout_path(self):
         a = Evidence.create(**self.kwargs(subject="src/example.java", value={"path": "src/example.java"}))
