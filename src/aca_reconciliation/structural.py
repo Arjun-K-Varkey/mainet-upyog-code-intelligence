@@ -48,7 +48,7 @@ class StructuralReconciler:
             candidates = tuple(sorted(by_source.get(source.id, ()), key=lambda m: m.mapping_id))
             if not candidates:
                 findings.append(self._finding(
-                    "REMOVAL", "CONFIRMED", source.id, None, source, None,
+                    request, "REMOVAL", source.id, None, source, None,
                     source_graph, target_graph, rationale="Source node has no deterministic target mapping.",
                     source_evidence_refs=source.evidence_refs,
                 ))
@@ -56,7 +56,7 @@ class StructuralReconciler:
                 mapping = candidates[0]
                 target = target_graph.nodes[mapping.target_node]  # type: ignore[index]
                 findings.append(self._finding(
-                    "MATCH", "CONFIRMED", source.id, target.id, source, target,
+                    request, "MATCH", source.id, target.id, source, target,
                     source_graph, target_graph,
                     related_mapping_ids=(mapping.mapping_id,),
                     evidence_refs=tuple(sorted(set(source.evidence_refs) | set(target.evidence_refs))),
@@ -66,7 +66,7 @@ class StructuralReconciler:
             else:
                 alternatives = tuple(sorted(m.target_node for m in candidates if m.target_node))
                 findings.append(self._finding(
-                    "AMBIGUOUS_MAPPING", "AMBIGUOUS", source.id, None, source, None,
+                    request, "AMBIGUOUS_MAPPING", "AMBIGUOUS", source.id, None, source, None,
                     source_graph, target_graph,
                     rationale="Multiple deterministic candidates remain; no silent selection is permitted.",
                     related_mapping_ids=tuple(m.mapping_id for m in candidates),
@@ -77,10 +77,11 @@ class StructuralReconciler:
         for target in target_nodes:
             if target.id not in matched_targets:
                 findings.append(self._finding(
-                    "ADDITION", "CONFIRMED", None or "", target.id, None, target,
+                    request, "ADDITION", "CONFIRMED", "<SOURCE_ARTIFACT_ABSENT>", target.id, None, target,
                     source_graph, target_graph,
                     rationale="Target node has no deterministic source mapping.",
                     target_evidence_refs=target.evidence_refs,
+                    boundaries=({"type": "TARGET_ONLY", "target_node": target.id},),
                 ))
 
         findings.extend(self._relationship_findings(source_graph, target_graph, mappings, request))
@@ -103,14 +104,14 @@ class StructuralReconciler:
             raise ValueError("IDENTICAL_GRAPH_CONTEXTS")
 
     @staticmethod
-    def _finding(category: str, state: str, source_id: str | None, target_id: str | None,
+    def _finding(request: ReconciliationRequest, category: str, state: str, source_id: str | None, target_id: str | None,
                  source_node: Any, target_node: Any, source_graph: Graph, target_graph: Graph,
                  *, evidence_refs=(), source_evidence_refs=(), target_evidence_refs=(),
                  rationale=None, related_mapping_ids=(), boundaries=()):
         return ReconciliationFinding.create(
             category, state, "deterministic", source_id or "", target_id,
             _context_from_graph(source_graph), _context_from_graph(target_graph),
-            reconciliation_id="structural",
+            reconciliation_id=request.reconciliation_id,
             evidence_refs=tuple(evidence_refs),
             source_evidence_refs=tuple(source_evidence_refs),
             target_evidence_refs=tuple(target_evidence_refs),
