@@ -31,7 +31,7 @@ class StructuralReconciler:
             source_dict = source.to_dict()
             source_candidates = self.mapping_registry.map_nodes(source_dict, (n.to_dict() for n in target_nodes), request)
             for candidate in source_candidates:
-                mappings.append(self._with_context_identity(candidate, source_graph, target_graph))
+                mappings.append(candidate)
 
         findings: list[ReconciliationFinding] = []
         by_source: dict[str, list[CandidateMapping]] = {}
@@ -41,7 +41,6 @@ class StructuralReconciler:
             if mapping.target_node is not None:
                 by_target.setdefault(mapping.target_node, []).append(mapping)
 
-        matched_sources = set(by_source)
         matched_targets = set(by_target)
 
         for source in source_nodes:
@@ -55,9 +54,14 @@ class StructuralReconciler:
             elif len(candidates) == 1:
                 mapping = candidates[0]
                 target = target_graph.nodes[mapping.target_node]  # type: ignore[index]
+                category = "MATCH"
+                state = mapping.state
+                provenance = mapping.provenance
                 findings.append(self._finding(
-                    request, "MATCH", source.id, target.id, source, target,
+                    request, category, state, source.id, target.id, source, target,
                     source_graph, target_graph,
+                    provenance=provenance,
+                    confidence=mapping.confidence,
                     related_mapping_ids=(mapping.mapping_id,),
                     evidence_refs=tuple(sorted(set(source.evidence_refs) | set(target.evidence_refs))),
                     source_evidence_refs=source.evidence_refs,
@@ -106,10 +110,11 @@ class StructuralReconciler:
     @staticmethod
     def _finding(request: ReconciliationRequest, category: str, state: str, source_id: str | None, target_id: str | None,
                  source_node: Any, target_node: Any, source_graph: Graph, target_graph: Graph,
-                 *, evidence_refs=(), source_evidence_refs=(), target_evidence_refs=(),
-                 rationale=None, related_mapping_ids=(), boundaries=()):
+                 *, provenance="deterministic", confidence=None, evidence_refs=(),
+                 source_evidence_refs=(), target_evidence_refs=(), rationale=None,
+                 related_mapping_ids=(), boundaries=()):
         return ReconciliationFinding.create(
-            category, state, "deterministic", source_id or "", target_id,
+            category, state, provenance, source_id or "", target_id,
             _context_from_graph(source_graph), _context_from_graph(target_graph),
             reconciliation_id=request.reconciliation_id,
             evidence_refs=tuple(evidence_refs),
@@ -117,6 +122,7 @@ class StructuralReconciler:
             target_evidence_refs=tuple(target_evidence_refs),
             rationale=rationale,
             related_mapping_ids=tuple(related_mapping_ids),
+            confidence=confidence,
             boundaries=tuple(boundaries),
         )
 
