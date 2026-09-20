@@ -368,6 +368,7 @@ class Trace:
             contradictions=tuple(raw.get("contradictions", [])),
         )
         trace.require_valid(graph, evidence_resolver)
+        return trace
 
 
 class TraceRule:
